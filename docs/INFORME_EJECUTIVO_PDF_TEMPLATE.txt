@@ -1,0 +1,4 @@
+Si necesitas editar rapido antes de exportar el PDF:
+1) Edita docs/INFORME_EJECUTIVO.md con nombres reales y fecha.
+2) Mantener longitud maxima aproximada de 5 paginas.
+3) Exportar a PDF para entrega final.

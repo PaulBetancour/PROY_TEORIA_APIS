@@ -6,6 +6,10 @@ Proyecto integrador para construir un sistema completo de analisis de riesgo fin
 - Consumo de APIs externas (Yahoo Finance, FRED)
 - Modelos de riesgo: indicadores tecnicos, pruebas de normalidad, ARCH/GARCH, CAPM, VaR/CVaR, Markowitz, alertas, macro y benchmark
 
+## Autores
+- [Completar Nombre Integrante 1]
+- [Completar Nombre Integrante 2]
+
 ## Estructura del repositorio
 
 proyecto-riesgo/
@@ -79,6 +83,11 @@ streamlit run frontend/app.py
 - GET /macro
 - GET /benchmark
 - GET /volatilidad/{ticker}
+
+## Fuente de datos y consultas a APIs
+- Yahoo Finance (via yfinance) para precios historicos y retornos de activos.
+- FRED para tasa libre de riesgo e inflacion (cuando hay API key; con fallback controlado).
+- Consulta implementada en backend/app/services.py (funciones fetch_prices_df, fetch_close_returns_matrix y _fetch_usd_cop).
 
 ## Validaciones y buenas practicas
 - Pydantic v2 con Field y @field_validator

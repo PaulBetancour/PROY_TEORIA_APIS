@@ -2,28 +2,43 @@
 
 ## 1) Backend FastAPI
 Estado: COMPLETADO
-- Carpeta backend con app, dependencias y modelos.
-- Documentacion automatica en /docs.
-- Configuracion por .env.example.
+- App FastAPI: backend/app/main.py
+- Endpoints implementados (>= 7): /activos, /precios/{ticker}, /rendimientos/{ticker}, /indicadores/{ticker}, /var, /capm, /frontera-eficiente, /alertas, /macro.
+- Endpoints adicionales: /benchmark y /volatilidad/{ticker}.
+- Modelos Pydantic request/response con Field y @field_validator: backend/app/models.py
+- Inyeccion de dependencias con Depends: backend/app/dependencies.py
+- Configuracion con BaseSettings y .env: backend/app/config.py
+- Documentacion automatica Swagger UI: http://127.0.0.1:8000/docs
+- Dependencias con versiones fijas: backend/requirements.txt
 
 ## 2) Tablero interactivo (frontend)
 Estado: COMPLETADO
-- Carpeta frontend con app Streamlit.
-- Consumo HTTP de backend para los 8 modulos.
+- Frontend Streamlit: frontend/app.py
+- Navegacion por 8 modulos con tabs: analisis tecnico, rendimientos, ARCH/GARCH, CAPM, VaR/CVaR, Markowitz, senales, macro/benchmark.
+- Consume backend por HTTP (requests a endpoints de FastAPI), sin logica de negocio pesada en frontend.
+- Incluye textos interpretativos en cada modulo y manejo de errores API.
+- Dependencias con versiones fijas: frontend/requirements.txt
 
 ## 3) Repositorio Git
 Estado: COMPLETADO
-- .gitignore presente.
-- requirements con versiones fijas.
-- README principal completo.
-- .env.example presente.
+- Historial de commits significativo en rama main.
+- Archivo .gitignore: .gitignore
+- Variables de entorno de ejemplo: backend/.env.example
+- README principal: README.md
 
-## 4) Informe ejecutivo (max 5 paginas)
-Estado: BORRADOR COMPLETADO
-- Archivo base listo en docs/INFORME_EJECUTIVO.md.
-- Falta convertirlo a PDF final y completar nombres/fecha/resultados finales de su corrida.
+## 4) Informe ejecutivo (PDF maximo 5 paginas)
+Estado: EN CIERRE
+- Version editable: docs/INFORME_EJECUTIVO.md
+- PDF final: docs/INFORME_EJECUTIVO.pdf
+- Pendiente humano final: completar nombres y fecha exacta de entrega.
 
 ## 5) Sustentacion oral (15-20 min)
-Estado: PREPARACION COMPLETADA
-- Guion listo en docs/GUION_SUSTENTACION.md.
-- Recomendado ensayar demo en vivo con backend y frontend levantados.
+Estado: COMPLETADO
+- Guion base: docs/GUION_SUSTENTACION.md
+- Incluye secuencia de demo en vivo, preguntas tecnicas esperadas y respuestas sugeridas.
+
+## Evidencia de consulta a Yahoo Finance
+- Implementada en backend/app/services.py usando yfinance:
+	- yf.download(ticker, ...) para precios por activo.
+	- yf.download(tickers, ...) para matriz de retornos del portafolio.
+	- yf.download("USDCOP=X", ...) para tasa de cambio.
