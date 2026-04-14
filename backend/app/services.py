@@ -284,9 +284,68 @@ class RiskAnalyticsService:
         return {
             "confidence": confidence,
             "var_parametric": var_parametric,
+            "var_parametric_annualized": float(var_parametric * np.sqrt(self.settings.trading_days_per_year)),
             "var_historical": var_historical,
+            "var_historical_annualized": float(var_historical * np.sqrt(self.settings.trading_days_per_year)),
             "var_monte_carlo": var_monte_carlo,
+            "var_monte_carlo_annualized": float(var_monte_carlo * np.sqrt(self.settings.trading_days_per_year)),
             "cvar_historical": cvar_historical,
+        }
+
+    @timed
+    def benchmark_performance(self, tickers: list[str], benchmark: str | None = None) -> dict:
+        benchmark_ticker = benchmark or self.settings.default_benchmark
+        universe = list(dict.fromkeys(tickers + [benchmark_ticker]))
+        returns = self.data_service.fetch_close_returns_matrix(universe)
+        rf = self.data_service.get_macro_snapshot()["risk_free_rate_annual"]
+
+        benchmark_series = returns[benchmark_ticker]
+        asset_tickers = [t for t in tickers if t in returns.columns and t != benchmark_ticker]
+        if not asset_tickers:
+            raise ValueError("At least one non-benchmark ticker is required")
+
+        port_series = returns[asset_tickers].mean(axis=1)
+        ann = self.settings.trading_days_per_year
+
+        port_ret = float(port_series.mean() * ann)
+        bench_ret = float(benchmark_series.mean() * ann)
+        port_vol = float(port_series.std(ddof=1) * np.sqrt(ann))
+        bench_vol = float(benchmark_series.std(ddof=1) * np.sqrt(ann))
+
+        cov = np.cov(port_series.values, benchmark_series.values, ddof=1)[0, 1]
+        var_m = np.var(benchmark_series.values, ddof=1)
+        beta_p = float(cov / var_m) if var_m > 0 else 1.0
+
+        alpha_jensen = float(port_ret - (rf + beta_p * (bench_ret - rf)))
+        diff = port_series - benchmark_series
+        tracking_error = float(diff.std(ddof=1) * np.sqrt(ann))
+        information_ratio = float((port_ret - bench_ret) / tracking_error) if tracking_error > 1e-12 else 0.0
+        sharpe_port = float((port_ret - rf) / port_vol) if port_vol > 1e-12 else 0.0
+        sharpe_bench = float((bench_ret - rf) / bench_vol) if bench_vol > 1e-12 else 0.0
+
+        cumulative_port = (1 + port_series).cumprod() * 100
+        cumulative_bench = (1 + benchmark_series).cumprod() * 100
+
+        def max_drawdown(series: pd.Series) -> float:
+            running_max = series.cummax()
+            dd = (series / running_max) - 1.0
+            return float(dd.min())
+
+        return {
+            "benchmark": benchmark_ticker,
+            "portfolio_return_annual": port_ret,
+            "benchmark_return_annual": bench_ret,
+            "portfolio_volatility_annual": port_vol,
+            "benchmark_volatility_annual": bench_vol,
+            "alpha_jensen": alpha_jensen,
+            "tracking_error": tracking_error,
+            "information_ratio": information_ratio,
+            "sharpe_portfolio": sharpe_port,
+            "sharpe_benchmark": sharpe_bench,
+            "max_drawdown_portfolio": max_drawdown(cumulative_port),
+            "max_drawdown_benchmark": max_drawdown(cumulative_bench),
+            "cumulative_portfolio_base100": [float(x) for x in cumulative_port.values],
+            "cumulative_benchmark_base100": [float(x) for x in cumulative_bench.values],
         }
 
     @timed
@@ -499,3 +558,6 @@ class RiskAnalyticsService:
 
     async def volatility_models_async(self, ticker: str, start: str | None = None, end: str | None = None) -> dict:
         return await asyncio.to_thread(self.volatility_models, ticker, start, end)
+
+    async def benchmark_performance_async(self, tickers: list[str], benchmark: str | None = None) -> dict:
+        return await asyncio.to_thread(self.benchmark_performance, tickers, benchmark)

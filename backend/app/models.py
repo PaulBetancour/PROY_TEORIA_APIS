@@ -92,8 +92,11 @@ class VarRequest(BaseModel):
 class VarResponse(BaseModel):
     confidence: float
     var_parametric: float
+    var_parametric_annualized: float
     var_historical: float
+    var_historical_annualized: float
     var_monte_carlo: float
+    var_monte_carlo_annualized: float
     cvar_historical: float
 
 
@@ -151,6 +154,23 @@ class MacroResponse(BaseModel):
     risk_free_rate_annual: float = Field(..., description="Annual risk free rate as decimal")
     inflation_yoy: float = Field(..., description="YoY inflation as decimal")
     usd_cop: float = Field(..., description="USD/COP exchange rate")
+
+
+class BenchmarkPerformanceResponse(BaseModel):
+    benchmark: str
+    portfolio_return_annual: float
+    benchmark_return_annual: float
+    portfolio_volatility_annual: float
+    benchmark_volatility_annual: float
+    alpha_jensen: float
+    tracking_error: float
+    information_ratio: float
+    sharpe_portfolio: float
+    sharpe_benchmark: float
+    max_drawdown_portfolio: float
+    max_drawdown_benchmark: float
+    cumulative_portfolio_base100: list[float]
+    cumulative_benchmark_base100: list[float]
 
 
 class VolatilityModelResult(BaseModel):

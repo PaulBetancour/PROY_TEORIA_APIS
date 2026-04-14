@@ -77,6 +77,7 @@ streamlit run frontend/app.py
 - POST /frontera-eficiente
 - GET /alertas
 - GET /macro
+- GET /benchmark
 - GET /volatilidad/{ticker}
 
 ## Validaciones y buenas practicas

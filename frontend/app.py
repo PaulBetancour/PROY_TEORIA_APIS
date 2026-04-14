@@ -178,9 +178,12 @@ with tabs[4]:
                 st.json(data)
                 fig = go.Figure(
                     data=[
-                        go.Bar(name="Parametrico", x=["VaR"], y=[data["var_parametric"]]),
-                        go.Bar(name="Historico", x=["VaR"], y=[data["var_historical"]]),
-                        go.Bar(name="Monte Carlo", x=["VaR"], y=[data["var_monte_carlo"]]),
+                        go.Bar(name="Parametrico", x=["VaR Diario"], y=[data["var_parametric"]]),
+                        go.Bar(name="Historico", x=["VaR Diario"], y=[data["var_historical"]]),
+                        go.Bar(name="Monte Carlo", x=["VaR Diario"], y=[data["var_monte_carlo"]]),
+                        go.Bar(name="Parametrico Anual", x=["VaR Anualizado"], y=[data["var_parametric_annualized"]]),
+                        go.Bar(name="Historico Anual", x=["VaR Anualizado"], y=[data["var_historical_annualized"]]),
+                        go.Bar(name="Monte Carlo Anual", x=["VaR Anualizado"], y=[data["var_monte_carlo_annualized"]]),
                         go.Bar(name="CVaR Hist", x=["CVaR"], y=[data["cvar_historical"]]),
                     ]
                 )
@@ -227,32 +230,37 @@ with tabs[6]:
 with tabs[7]:
     st.subheader("Modulo 8 - Macro y benchmark")
     macro = safe_get("/macro")
-    capm_data = safe_get("/capm", params={"tickers": ",".join([t for t in tickers if t != "SPY"]), "benchmark": "SPY"})
+    portfolio_tickers = [t for t in tickers if t != "SPY"]
+    capm_data = safe_get("/capm", params={"tickers": ",".join(portfolio_tickers), "benchmark": "SPY"})
+    benchmark_data = safe_get("/benchmark", params={"tickers": ",".join(portfolio_tickers), "benchmark": "SPY"}) if portfolio_tickers else None
     if macro:
         c1, c2, c3 = st.columns(3)
         c1.metric("Rf anual", f"{macro['risk_free_rate_annual']:.2%}")
         c2.metric("Inflacion YoY", f"{macro['inflation_yoy']:.2%}")
         c3.metric("USD/COP", f"{macro['usd_cop']:.2f}")
 
-    if capm_data and capm_data["assets"]:
-        assets = pd.DataFrame(capm_data["assets"])
-        mean_port_return = assets["annualized_return_asset"].mean()
-        market_return = assets["annualized_return_market"].iloc[0]
-        rf = capm_data["risk_free_rate"]
-        beta_port = assets["beta"].mean()
-        alpha_jensen = mean_port_return - (rf + beta_port * (market_return - rf))
+    if benchmark_data:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Alpha Jensen", f"{benchmark_data['alpha_jensen']:.2%}")
+        c2.metric("Tracking Error", f"{benchmark_data['tracking_error']:.2%}")
+        c3.metric("Information Ratio", f"{benchmark_data['information_ratio']:.3f}")
 
-        st.write("Metricas benchmark")
-        st.write(
+        c4, c5, c6 = st.columns(3)
+        c4.metric("Sharpe Portafolio", f"{benchmark_data['sharpe_portfolio']:.3f}")
+        c5.metric("Sharpe Benchmark", f"{benchmark_data['sharpe_benchmark']:.3f}")
+        c6.metric("MDD Portafolio", f"{benchmark_data['max_drawdown_portfolio']:.2%}")
+
+        curve_df = pd.DataFrame(
             {
-                "alpha_jensen": float(alpha_jensen),
-                "tracking_error_aprox": float((assets["annualized_return_asset"] - market_return).std(ddof=0)),
-                "information_ratio_aprox": float(
-                    (mean_port_return - market_return)
-                    / max((assets["annualized_return_asset"] - market_return).std(ddof=0), 1e-8)
-                ),
+                "Portafolio": benchmark_data["cumulative_portfolio_base100"],
+                "Benchmark": benchmark_data["cumulative_benchmark_base100"],
             }
         )
+        curve_df["Index"] = range(len(curve_df))
+        fig_curve = px.line(curve_df, x="Index", y=["Portafolio", "Benchmark"], title="Rendimiento acumulado base 100")
+        st.plotly_chart(fig_curve, use_container_width=True)
 
+    if capm_data and capm_data["assets"]:
+        assets = pd.DataFrame(capm_data["assets"])
         fig = px.bar(assets, x="ticker", y=["annualized_return_asset", "expected_return_capm"], barmode="group")
         st.plotly_chart(fig, use_container_width=True)

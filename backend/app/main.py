@@ -6,6 +6,7 @@ from .config import Settings, get_settings
 from .dependencies import get_risk_service
 from .models import (
     AlertsResponse,
+    BenchmarkPerformanceResponse,
     CapmResponse,
     FrontierRequest,
     FrontierResponse,
@@ -137,6 +138,24 @@ async def macro(service: RiskAnalyticsService = Depends(get_risk_service)) -> di
         return await service.macro_async()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"Error getting macro data: {exc}") from exc
+
+
+@app.get("/benchmark", response_model=BenchmarkPerformanceResponse)
+async def benchmark(
+    tickers: str = Query(..., description="Comma separated tickers for portfolio"),
+    benchmark: str | None = Query(default=None),
+    service: RiskAnalyticsService = Depends(get_risk_service),
+) -> dict:
+    ticker_list = [x.strip().upper() for x in tickers.split(",") if x.strip()]
+    try:
+        return await service.benchmark_performance_async(
+            tickers=ticker_list,
+            benchmark=benchmark.upper() if benchmark else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Error computing benchmark performance: {exc}") from exc
 
 
 @app.get("/volatilidad/{ticker}", response_model=VolatilityResponse)
