@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from scipy import stats
 
 
 st.set_page_config(page_title="RiskLab USTA", layout="wide")
@@ -167,9 +169,41 @@ with tabs[1]:
 
         st.line_chart(df.set_index("date")[["simple_return", "log_return"]])
 
+        qq_x = np.sort(df["simple_return"].values)
+        n = len(qq_x)
+        probs = (np.arange(1, n + 1) - 0.5) / n
+        qq_theoretical = stats.norm.ppf(probs, loc=np.mean(qq_x), scale=np.std(qq_x, ddof=1))
+        qq_fig = go.Figure()
+        qq_fig.add_trace(go.Scatter(x=qq_theoretical, y=qq_x, mode="markers", name="Datos"))
+        qq_fig.add_trace(
+            go.Scatter(
+                x=[qq_theoretical.min(), qq_theoretical.max()],
+                y=[qq_theoretical.min(), qq_theoretical.max()],
+                mode="lines",
+                name="Referencia Normal",
+                line=dict(dash="dash"),
+            )
+        )
+        qq_fig.update_layout(title="Q-Q plot vs Normal", xaxis_title="Cuantiles teoricos", yaxis_title="Cuantiles muestrales")
+        st.plotly_chart(qq_fig, use_container_width=True)
+
         jb_msg = "No normal" if stats_data["jarque_bera_pvalue"] < 0.05 else "Normal"
         shapiro_msg = "No normal" if stats_data["shapiro_pvalue"] < 0.05 else "Normal"
         st.info(f"Interpretacion JB: {jb_msg} | Interpretacion Shapiro: {shapiro_msg}")
+
+        skew = float(stats_data["skewness"])
+        kurt = float(stats_data["kurtosis"])
+        if abs(skew) > 0.5:
+            skew_msg = "asimetria relevante"
+        else:
+            skew_msg = "asimetria baja"
+        if kurt > 3:
+            kurt_msg = "colas pesadas"
+        else:
+            kurt_msg = "colas moderadas"
+        st.write(
+            f"Hechos estilizados: {skew_msg} (skew={skew:.3f}), {kurt_msg} (kurtosis={kurt:.3f})."
+        )
 
 
 with tabs[2]:
@@ -191,6 +225,17 @@ with tabs[2]:
         st.dataframe(models, use_container_width=True)
         fig_ic = px.bar(models, x="model_name", y=["aic", "bic"], barmode="group", title="Comparacion AIC/BIC")
         st.plotly_chart(fig_ic, use_container_width=True)
+        st.markdown("**Diagnostico de residuos estandarizados (modelo seleccionado)**")
+        st.write(
+            {
+                "jarque_bera_stat": data.get("residuals_jarque_bera_stat"),
+                "jarque_bera_pvalue": data.get("residuals_jarque_bera_pvalue"),
+            }
+        )
+        resid = pd.Series(data.get("standardized_residuals", []), name="std_resid")
+        if not resid.empty:
+            resid_fig = px.line(resid, y="std_resid", title="Residuos estandarizados")
+            st.plotly_chart(resid_fig, use_container_width=True)
         st.success(
             f"Mejor modelo por AIC: {data['best_model']} | Pronostico volatilidad proximo dia: {data['forecast_next_day_volatility']:.4f}"
         )
@@ -215,6 +260,16 @@ with tabs[3]:
         if not assets.empty:
             fig = px.bar(assets, x="ticker", y="beta", color="classification", title="Betas por activo")
             st.plotly_chart(fig, use_container_width=True)
+
+            scatter = px.scatter(
+                assets,
+                x="beta",
+                y="annualized_return_asset",
+                color="classification",
+                text="ticker",
+                title="Relacion Beta vs Retorno anualizado",
+            )
+            st.plotly_chart(scatter, use_container_width=True)
 
 
 with tabs[4]:
@@ -256,6 +311,18 @@ with tabs[4]:
                     ]
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+                # Visual tipo distribucion con lineas de VaR y CVaR en escala de perdida
+                loss_points = np.linspace(0, max(data["var_monte_carlo"] * 2, data["cvar_historical"] * 1.5, 1e-4), 100)
+                density = stats.norm.pdf(loss_points, loc=data["var_parametric"] / 2, scale=max(data["var_parametric"] / 3, 1e-6))
+                dens_fig = go.Figure()
+                dens_fig.add_trace(go.Scatter(x=loss_points, y=density, mode="lines", name="Densidad ilustrativa"))
+                dens_fig.add_vline(x=data["var_parametric"], line_dash="dash", annotation_text="VaR Param")
+                dens_fig.add_vline(x=data["var_historical"], line_dash="dash", annotation_text="VaR Hist")
+                dens_fig.add_vline(x=data["var_monte_carlo"], line_dash="dash", annotation_text="VaR MC")
+                dens_fig.add_vline(x=data["cvar_historical"], line_dash="dot", annotation_text="CVaR")
+                dens_fig.update_layout(title="Distribucion de perdida (ilustrativa) con lineas VaR/CVaR", xaxis_title="Perdida", yaxis_title="Densidad")
+                st.plotly_chart(dens_fig, use_container_width=True)
 
 
 with tabs[5]:

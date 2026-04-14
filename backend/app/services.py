@@ -4,15 +4,17 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime, timedelta
 from functools import lru_cache, wraps
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import requests
-import yfinance as yf
 from arch import arch_model
+from requests.adapters import HTTPAdapter
 from scipy import stats
+from urllib3.util.retry import Retry
 
 from .config import Settings
 
@@ -36,51 +38,251 @@ def timed(func):
 class DataService:
     settings: Settings
 
+    def __post_init__(self) -> None:
+        self.session = requests.Session()
+        retry = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.6,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+    def _epoch_bounds(self, start: str | None, end: str | None) -> tuple[int, int]:
+        start_date = pd.to_datetime(start or self.settings.default_start_date)
+        end_date = pd.to_datetime(end or datetime.utcnow().date())
+        p1 = int(start_date.timestamp())
+        p2 = int((end_date + timedelta(days=1)).timestamp())
+        return p1, p2
+
     @timed
-    def fetch_prices_df(self, ticker: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
-        start_date = start or self.settings.default_start_date
-        end_date = end or self.settings.default_end_date
-        data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=False)
-        if data.empty:
-            raise ValueError(f"No data found for ticker: {ticker}")
-        data = data.reset_index().rename(columns={"Date": "date"})
+    def _fetch_prices_yahoo(self, ticker: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
+        p1, p2 = self._epoch_bounds(start, end)
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        params = {
+            "interval": "1d",
+            "period1": p1,
+            "period2": p2,
+            "events": "history",
+            "includeAdjustedClose": "true",
+        }
 
-        required_cols = ["date", "Open", "High", "Low", "Close", "Volume"]
-        missing = [col for col in required_cols if col not in data.columns]
-        if missing:
-            raise ValueError(f"Missing columns in market data for {ticker}: {missing}")
+        response = self.session.get(url, params=params, timeout=self.settings.request_timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        result = payload.get("chart", {}).get("result", [])
+        if not result:
+            raise ValueError(f"Yahoo Finance returned no data for {ticker}")
 
-        data = data[required_cols].rename(
-            columns={
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
+        node = result[0]
+        timestamps = node.get("timestamp") or []
+        quote = (node.get("indicators", {}).get("quote") or [{}])[0]
+
+        if not timestamps:
+            raise ValueError(f"Yahoo Finance timestamps missing for {ticker}")
+
+        frame = pd.DataFrame(
+            {
+                "date": [datetime.utcfromtimestamp(ts).date() for ts in timestamps],
+                "open": quote.get("open", []),
+                "high": quote.get("high", []),
+                "low": quote.get("low", []),
+                "close": quote.get("close", []),
+                "volume": quote.get("volume", []),
             }
         )
-        data["date"] = pd.to_datetime(data["date"]).dt.date
-        data = data.dropna().sort_values("date")
-        return data
+        frame = frame.dropna(subset=["open", "high", "low", "close"]).copy()
+        if frame.empty:
+            raise ValueError(f"Yahoo Finance OHLC empty for {ticker}")
+        return frame.sort_values("date")
+
+    @timed
+    def _fetch_prices_alpha_vantage(self, ticker: str) -> pd.DataFrame:
+        if not self.settings.alpha_vantage_api_key:
+            raise ValueError("ALPHA_VANTAGE_API_KEY not configured")
+
+        url = "https://www.alphavantage.co/query"
+        params = {
+            "function": "TIME_SERIES_DAILY_ADJUSTED",
+            "symbol": ticker,
+            "apikey": self.settings.alpha_vantage_api_key,
+            "outputsize": "full",
+        }
+        response = self.session.get(url, params=params, timeout=self.settings.request_timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        series = payload.get("Time Series (Daily)")
+        if not series:
+            raise ValueError(f"Alpha Vantage returned no series for {ticker}")
+
+        rows = []
+        for d, values in series.items():
+            rows.append(
+                {
+                    "date": pd.to_datetime(d).date(),
+                    "open": float(values.get("1. open", 0.0)),
+                    "high": float(values.get("2. high", 0.0)),
+                    "low": float(values.get("3. low", 0.0)),
+                    "close": float(values.get("4. close", 0.0)),
+                    "volume": float(values.get("6. volume", 0.0)),
+                }
+            )
+
+        frame = pd.DataFrame(rows).sort_values("date")
+        if frame.empty:
+            raise ValueError(f"Alpha Vantage OHLC empty for {ticker}")
+        return frame
+
+    @timed
+    def _fetch_prices_finnhub(self, ticker: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
+        if not self.settings.finnhub_api_key:
+            raise ValueError("FINNHUB_API_KEY not configured")
+        p1, p2 = self._epoch_bounds(start, end)
+
+        url = "https://finnhub.io/api/v1/stock/candle"
+        params = {
+            "symbol": ticker,
+            "resolution": "D",
+            "from": p1,
+            "to": p2,
+            "token": self.settings.finnhub_api_key,
+        }
+        response = self.session.get(url, params=params, timeout=self.settings.request_timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("s") != "ok":
+            raise ValueError(f"Finnhub returned status {payload.get('s')} for {ticker}")
+
+        frame = pd.DataFrame(
+            {
+                "date": [datetime.utcfromtimestamp(ts).date() for ts in payload.get("t", [])],
+                "open": payload.get("o", []),
+                "high": payload.get("h", []),
+                "low": payload.get("l", []),
+                "close": payload.get("c", []),
+                "volume": payload.get("v", []),
+            }
+        )
+        frame = frame.dropna(subset=["open", "high", "low", "close"]).copy()
+        if frame.empty:
+            raise ValueError(f"Finnhub OHLC empty for {ticker}")
+        return frame.sort_values("date")
+
+    @timed
+    def _fetch_prices_polygon(self, ticker: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
+        if not self.settings.polygon_api_key:
+            raise ValueError("POLYGON_API_KEY not configured")
+
+        start_date = (start or self.settings.default_start_date)
+        end_date = (end or str(datetime.utcnow().date()))
+        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date}/{end_date}"
+        params = {
+            "adjusted": "true",
+            "sort": "asc",
+            "apiKey": self.settings.polygon_api_key,
+            "limit": 50000,
+        }
+        response = self.session.get(url, params=params, timeout=self.settings.request_timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("results", [])
+        if not rows:
+            raise ValueError(f"Polygon returned no results for {ticker}")
+
+        frame = pd.DataFrame(
+            {
+                "date": [datetime.utcfromtimestamp(r["t"] / 1000).date() for r in rows],
+                "open": [r.get("o") for r in rows],
+                "high": [r.get("h") for r in rows],
+                "low": [r.get("l") for r in rows],
+                "close": [r.get("c") for r in rows],
+                "volume": [r.get("v") for r in rows],
+            }
+        )
+        frame = frame.dropna(subset=["open", "high", "low", "close"]).copy()
+        if frame.empty:
+            raise ValueError(f"Polygon OHLC empty for {ticker}")
+        return frame.sort_values("date")
+
+    def _slice_dates(self, data: pd.DataFrame, start: str | None, end: str | None) -> pd.DataFrame:
+        out = data.copy()
+        if start:
+            out = out[out["date"] >= pd.to_datetime(start).date()]
+        if end:
+            out = out[out["date"] <= pd.to_datetime(end).date()]
+        return out.sort_values("date")
+
+    def _provider_sequence(self) -> list[str]:
+        ordered = [
+            self.settings.market_data_provider,
+            "yahoo",
+            "alpha_vantage",
+            "finnhub",
+            "polygon",
+        ]
+        unique = []
+        for provider in ordered:
+            if provider and provider not in unique:
+                unique.append(provider)
+        return unique
+
+    def api_sources_status(self) -> dict[str, Any]:
+        return {
+            "market_data_provider": self.settings.market_data_provider,
+            "provider_fallback_order": self._provider_sequence(),
+            "sources": {
+                "yahoo_finance": {"enabled": True, "auth": "none"},
+                "alpha_vantage": {"enabled": bool(self.settings.alpha_vantage_api_key), "auth": "api_key"},
+                "finnhub": {"enabled": bool(self.settings.finnhub_api_key), "auth": "api_key"},
+                "polygon": {"enabled": bool(self.settings.polygon_api_key), "auth": "api_key"},
+                "fred": {"enabled": True, "auth": "api_key_optional"},
+                "banco_republica": {
+                    "enabled": bool(self.settings.banrep_enabled),
+                    "fx_url_configured": bool(self.settings.banrep_fx_url),
+                    "risk_free_url_configured": bool(self.settings.banrep_risk_free_url),
+                    "inflation_url_configured": bool(self.settings.banrep_inflation_url),
+                },
+            },
+        }
+
+    @timed
+    def fetch_prices_df(self, ticker: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
+        errors: list[str] = []
+        for provider in self._provider_sequence():
+            try:
+                if provider == "yahoo":
+                    frame = self._fetch_prices_yahoo(ticker=ticker, start=start, end=end)
+                elif provider == "alpha_vantage":
+                    frame = self._slice_dates(self._fetch_prices_alpha_vantage(ticker=ticker), start=start, end=end)
+                elif provider == "finnhub":
+                    frame = self._fetch_prices_finnhub(ticker=ticker, start=start, end=end)
+                elif provider == "polygon":
+                    frame = self._fetch_prices_polygon(ticker=ticker, start=start, end=end)
+                else:
+                    continue
+
+                if not frame.empty:
+                    return frame
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{provider}: {exc}")
+
+        raise ValueError(f"No data found for ticker {ticker}. Providers tried -> {' | '.join(errors)}")
 
     @timed
     def fetch_close_returns_matrix(self, tickers: list[str], start: str | None = None, end: str | None = None) -> pd.DataFrame:
-        start_date = start or self.settings.default_start_date
-        end_date = end or self.settings.default_end_date
+        close_by_ticker: dict[str, pd.Series] = {}
+        for ticker in tickers:
+            frame = self.fetch_prices_df(ticker=ticker, start=start, end=end)
+            close_series = frame.set_index("date")["close"].rename(ticker)
+            close_by_ticker[ticker] = close_series
 
-        raw = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=False)
-        if raw.empty:
-            raise ValueError("No price data returned for portfolio")
-
-        if isinstance(raw.columns, pd.MultiIndex):
-            if "Close" in raw.columns.get_level_values(0):
-                close = raw["Close"].copy()
-            else:
-                raise ValueError("Close prices not available")
-        else:
-            close = raw[["Close"]].rename(columns={"Close": tickers[0]})
-
-        close = close.dropna(how="all")
+        close = pd.concat(close_by_ticker.values(), axis=1)
+        close.columns = list(close_by_ticker.keys())
+        close = close.sort_index().dropna(how="all")
         returns = close.pct_change().dropna(how="any")
         if returns.empty:
             raise ValueError("Unable to compute returns matrix")
@@ -91,7 +293,16 @@ class DataService:
     def get_macro_snapshot(self) -> dict[str, float]:
         rf = self._fetch_fred_latest("DGS10")
         inflation = self._fetch_fred_latest("CPIAUCSL", yoy=True)
-        usd_cop = self._fetch_usd_cop()
+        banrep = self._fetch_banrep_snapshot()
+        usd_cop = banrep.get("usd_cop") if banrep else None
+
+        if rf is None and banrep:
+            rf = banrep.get("risk_free_rate_annual")
+        if inflation is None and banrep:
+            inflation = banrep.get("inflation_yoy")
+
+        if usd_cop is None:
+            usd_cop = self._fetch_usd_cop()
 
         if rf is None:
             rf = 0.045
@@ -118,7 +329,7 @@ class DataService:
             params["api_key"] = self.settings.fred_api_key
 
         try:
-            response = requests.get(base_url, params=params, timeout=self.settings.request_timeout_seconds)
+            response = self.session.get(base_url, params=params, timeout=self.settings.request_timeout_seconds)
             response.raise_for_status()
             observations = response.json().get("observations", [])
             values = [float(x["value"]) for x in observations if x.get("value") not in {".", None}]
@@ -137,14 +348,81 @@ class DataService:
             logger.warning("FRED call failed for %s: %s", series_id, exc)
             return None
 
-    def _fetch_usd_cop(self) -> float | None:
+    def _fetch_banrep_snapshot(self) -> dict[str, float] | None:
+        # Banco de la Republica endpoints can vary by dataset; these URLs are configurable.
+        if not self.settings.banrep_enabled:
+            return None
+
+        snapshot: dict[str, float] = {}
         try:
-            data = yf.download("USDCOP=X", period="5d", progress=False, auto_adjust=False)
-            if data.empty:
-                return None
-            return float(data["Close"].dropna().iloc[-1])
+            if self.settings.banrep_fx_url:
+                fx_resp = self.session.get(self.settings.banrep_fx_url, timeout=self.settings.request_timeout_seconds)
+                fx_resp.raise_for_status()
+                fx_payload = fx_resp.json()
+                snapshot["usd_cop"] = float(self._extract_first_numeric(fx_payload))
+            if self.settings.banrep_risk_free_url:
+                rf_resp = self.session.get(self.settings.banrep_risk_free_url, timeout=self.settings.request_timeout_seconds)
+                rf_resp.raise_for_status()
+                rf_payload = rf_resp.json()
+                snapshot["risk_free_rate_annual"] = float(self._extract_first_numeric(rf_payload)) / 100.0
+            if self.settings.banrep_inflation_url:
+                inf_resp = self.session.get(self.settings.banrep_inflation_url, timeout=self.settings.request_timeout_seconds)
+                inf_resp.raise_for_status()
+                inf_payload = inf_resp.json()
+                snapshot["inflation_yoy"] = float(self._extract_first_numeric(inf_payload)) / 100.0
         except Exception as exc:  # noqa: BLE001
-            logger.warning("USD/COP call failed: %s", exc)
+            logger.warning("Banco de la Republica call failed: %s", exc)
+
+        return snapshot or None
+
+    def _extract_first_numeric(self, payload: Any) -> float:
+        if isinstance(payload, dict):
+            for value in payload.values():
+                try:
+                    return float(value)
+                except Exception:  # noqa: BLE001
+                    continue
+            for value in payload.values():
+                if isinstance(value, (list, dict)):
+                    try:
+                        return self._extract_first_numeric(value)
+                    except Exception:  # noqa: BLE001
+                        continue
+        if isinstance(payload, list):
+            for item in payload:
+                try:
+                    return self._extract_first_numeric(item)
+                except Exception:  # noqa: BLE001
+                    continue
+        raise ValueError("No numeric value found in payload")
+
+    def _fetch_usd_cop(self) -> float | None:
+        # Try Finnhub, then Yahoo chart endpoint.
+        if self.settings.finnhub_api_key:
+            try:
+                p1 = int((datetime.utcnow() - timedelta(days=10)).timestamp())
+                p2 = int(datetime.utcnow().timestamp())
+                url = "https://finnhub.io/api/v1/forex/candle"
+                params = {
+                    "symbol": "OANDA:USDCOP",
+                    "resolution": "D",
+                    "from": p1,
+                    "to": p2,
+                    "token": self.settings.finnhub_api_key,
+                }
+                response = self.session.get(url, params=params, timeout=self.settings.request_timeout_seconds)
+                response.raise_for_status()
+                payload = response.json()
+                if payload.get("s") == "ok" and payload.get("c"):
+                    return float(payload["c"][-1])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Finnhub USD/COP call failed: %s", exc)
+
+        try:
+            data = self._fetch_prices_yahoo("USDCOP=X", start=(datetime.utcnow() - timedelta(days=15)).date().isoformat(), end=datetime.utcnow().date().isoformat())
+            return float(data["close"].dropna().iloc[-1])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Yahoo USD/COP call failed: %s", exc)
             return None
 
 
@@ -394,6 +672,7 @@ class RiskAnalyticsService:
         returns = self.data_service.fetch_close_returns_matrix(tickers)
         mu = returns.mean().values * self.settings.trading_days_per_year
         cov = returns.cov().values * self.settings.trading_days_per_year
+        rf = self.data_service.get_macro_snapshot()["risk_free_rate_annual"]
 
         n_assets = len(tickers)
         simulations = []
@@ -403,7 +682,7 @@ class RiskAnalyticsService:
             w = w / w.sum()
             ret = float(np.dot(w, mu))
             vol = float(np.sqrt(np.dot(w.T, np.dot(cov, w))))
-            sharpe = ret / vol if vol > 0 else 0.0
+            sharpe = (ret - rf) / vol if vol > 0 else 0.0
             simulations.append((ret, vol, sharpe, w))
 
         points = [{"expected_return": r, "volatility": v, "sharpe": s} for r, v, s, _ in simulations]
@@ -495,6 +774,9 @@ class RiskAnalyticsService:
     def macro(self) -> dict:
         return self.data_service.get_macro_snapshot()
 
+    def sources(self) -> dict:
+        return self.data_service.api_sources_status()
+
     @timed
     def volatility_models(self, ticker: str, start: str | None = None, end: str | None = None) -> dict:
         df = self.data_service.fetch_prices_df(ticker=ticker, start=start, end=end)
@@ -522,14 +804,21 @@ class RiskAnalyticsService:
             )
 
         best = min(model_results, key=lambda x: x["aic"])
-        forecast = fitted[best["model_name"]].forecast(horizon=1)
+        best_fit = fitted[best["model_name"]]
+        forecast = best_fit.forecast(horizon=1)
         vol_next = float(np.sqrt(forecast.variance.iloc[-1, 0]) / 100.0)
+
+        std_resid = pd.Series(best_fit.std_resid).dropna()
+        jb_stat, jb_pvalue = stats.jarque_bera(std_resid.values)
 
         return {
             "ticker": ticker,
             "models": model_results,
             "best_model": best["model_name"],
             "forecast_next_day_volatility": vol_next,
+            "residuals_jarque_bera_stat": float(jb_stat),
+            "residuals_jarque_bera_pvalue": float(jb_pvalue),
+            "standardized_residuals": [float(x) for x in std_resid.tail(400).values],
         }
 
     async def prices_async(self, ticker: str, start: str | None = None, end: str | None = None) -> dict:
@@ -555,6 +844,9 @@ class RiskAnalyticsService:
 
     async def macro_async(self) -> dict:
         return await asyncio.to_thread(self.macro)
+
+    async def sources_async(self) -> dict:
+        return await asyncio.to_thread(self.sources)
 
     async def volatility_models_async(self, ticker: str, start: str | None = None, end: str | None = None) -> dict:
         return await asyncio.to_thread(self.volatility_models, ticker, start, end)

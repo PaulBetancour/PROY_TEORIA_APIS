@@ -185,3 +185,6 @@ class VolatilityResponse(BaseModel):
     models: list[VolatilityModelResult]
     best_model: str
     forecast_next_day_volatility: float
+    residuals_jarque_bera_stat: float
+    residuals_jarque_bera_pvalue: float
+    standardized_residuals: list[float]

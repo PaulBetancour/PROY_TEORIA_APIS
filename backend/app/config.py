@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     default_tickers: list[str] = ["NVDA", "BCOLO.CB", "ECOPETROL.CB", "KO", "SPY"]
     default_start_date: str = "2023-01-01"
     default_end_date: str | None = None
+    market_data_provider: str = "yahoo"
 
     # Indicator settings
     sma_window: int = Field(default=20, ge=2, le=500)
@@ -28,6 +29,15 @@ class Settings(BaseSettings):
 
     # API keys (optional but supported)
     fred_api_key: str | None = None
+    alpha_vantage_api_key: str | None = None
+    finnhub_api_key: str | None = None
+    polygon_api_key: str | None = None
+
+    # Banco de la Republica configurable endpoints
+    banrep_enabled: bool = False
+    banrep_fx_url: str | None = None
+    banrep_risk_free_url: str | None = None
+    banrep_inflation_url: str | None = None
 
     # HTTP and cache settings
     request_timeout_seconds: int = Field(default=15, ge=1, le=120)

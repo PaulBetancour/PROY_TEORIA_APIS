@@ -37,6 +37,14 @@ async def activos(settings: Settings = Depends(get_settings)) -> list[str]:
     return settings.default_tickers
 
 
+@app.get("/fuentes")
+async def fuentes(service: RiskAnalyticsService = Depends(get_risk_service)) -> dict:
+    try:
+        return await service.sources_async()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Error reading configured API sources: {exc}") from exc
+
+
 @app.get("/precios/{ticker}", response_model=PricesResponse)
 async def precios(
     ticker: str,

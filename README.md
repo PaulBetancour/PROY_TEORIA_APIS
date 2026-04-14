@@ -3,7 +3,7 @@
 Proyecto integrador para construir un sistema completo de analisis de riesgo financiero:
 - Backend FastAPI (motor de calculo y API REST)
 - Frontend Streamlit (tablero interactivo)
-- Consumo de APIs externas (Yahoo Finance, FRED)
+- Consumo de APIs externas (Yahoo Finance, Alpha Vantage, Finnhub, FRED, Banco de la Republica, Polygon)
 - Modelos de riesgo: indicadores tecnicos, pruebas de normalidad, ARCH/GARCH, CAPM, VaR/CVaR, Markowitz, alertas, macro y benchmark
 
 ## Autores
@@ -37,6 +37,13 @@ Portafolio recomendado (diversificacion sectorial y geografica):
 - Energia Colombia: ECOPETROL.CB
 - Consumo defensivo EEUU: KO o WMT
 - Benchmark: SPY
+
+Portafolio sugerido por defecto del proyecto:
+- NVDA
+- BCOLO.CB
+- ECOPETROL.CB
+- KO
+- SPY
 
 ## Instalacion
 
@@ -72,6 +79,7 @@ streamlit run frontend/app.py
 
 ## Endpoints principales
 - GET /activos
+- GET /fuentes
 - GET /precios/{ticker}
 - GET /rendimientos/{ticker}
 - GET /indicadores/{ticker}
@@ -84,9 +92,17 @@ streamlit run frontend/app.py
 - GET /volatilidad/{ticker}
 
 ## Fuente de datos y consultas a APIs
-- Yahoo Finance (via yfinance) para precios historicos y retornos de activos.
-- FRED para tasa libre de riesgo e inflacion (cuando hay API key; con fallback controlado).
-- Consulta implementada en backend/app/services.py (funciones fetch_prices_df, fetch_close_returns_matrix y _fetch_usd_cop).
+- Yahoo Finance: precios historicos y en tiempo real (sin key).
+- Alpha Vantage: precios e indicadores (con key).
+- Finnhub: velas de mercado y forex (con key).
+- FRED API: tasa libre de riesgo e inflacion.
+- Banco de la Republica: endpoints configurables para macro Colombia.
+- Polygon.io: datos de mercado por API key.
+
+Integracion tecnica:
+- Capa HTTP con requests + retries (HTTPAdapter/Retry) + timeout.
+- Fallback automatico por proveedor en el backend.
+- Endpoint de trazabilidad de fuentes: GET /fuentes.
 
 ## Validaciones y buenas practicas
 - Pydantic v2 con Field y @field_validator
