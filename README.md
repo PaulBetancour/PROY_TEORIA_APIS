@@ -7,8 +7,7 @@ Proyecto integrador para construir un sistema completo de analisis de riesgo fin
 - Modelos de riesgo: indicadores tecnicos, pruebas de normalidad, ARCH/GARCH, CAPM, VaR/CVaR, Markowitz, alertas, macro y benchmark
 
 ## Autores
-- [Completar Nombre Integrante 1]
-- [Completar Nombre Integrante 2]
+- Paula Andrea Betancour
 
 ## Estructura del repositorio
 

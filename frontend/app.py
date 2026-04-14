@@ -15,6 +15,17 @@ API_BASE_URL = st.sidebar.text_input("Backend URL", value="http://127.0.0.1:8000
 DEFAULT_TICKERS = ["NVDA", "BCOLO.CB", "ECOPETROL.CB", "KO", "SPY"]
 
 
+def show_module_intro(module_name: str, objective: str, formulas: list[str], interpretation: str) -> None:
+    st.markdown(f"### {module_name}")
+    st.info(f"Objetivo: {objective}")
+    with st.expander("Ver formulas e interpretacion"):
+        st.markdown("**Formulas clave**")
+        for formula in formulas:
+            st.markdown(f"- {formula}")
+        st.markdown("**Interpretacion**")
+        st.write(interpretation)
+
+
 @st.cache_data(ttl=300)
 def api_get(path: str, params: dict | None = None) -> dict:
     response = requests.get(f"{API_BASE_URL}{path}", params=params, timeout=30)
@@ -47,6 +58,12 @@ def safe_post(path: str, payload: dict) -> dict | None:
 
 st.title("Proyecto Integrador - Teoria del Riesgo")
 st.caption("Frontend Streamlit consumiendo backend FastAPI")
+st.sidebar.markdown("### Estado del frontend")
+st.sidebar.write("- Archivo: frontend/app.py")
+st.sidebar.write("- Framework: Streamlit")
+st.sidebar.write("- Navegacion: tabs (8 modulos)")
+st.sidebar.write("- Fuente de datos: backend FastAPI")
+st.sidebar.write("- Backend URL configurable en esta barra lateral")
 
 col_a, col_b, col_c = st.columns(3)
 with col_a:
@@ -75,7 +92,17 @@ tabs = st.tabs(
 
 
 with tabs[0]:
-    st.subheader("Modulo 1 - Analisis tecnico")
+    show_module_intro(
+        module_name="Modulo 1 - Analisis tecnico",
+        objective="Explorar comportamiento historico e indicadores tecnicos por activo.",
+        formulas=[
+            "SMA(n) = promedio movil simple de n periodos.",
+            "EMA(n) = promedio movil exponencial con mayor peso reciente.",
+            "RSI = 100 - 100 / (1 + RS).",
+            "MACD = EMA(12) - EMA(26).",
+        ],
+        interpretation="RSI mayor a 70 sugiere sobrecompra, menor a 30 sugiere sobreventa. Cruces MACD/Signal apoyan lectura de impulso.",
+    )
     data = safe_get(
         f"/indicadores/{main_ticker}",
         params={"start_date": str(start_date), "end_date": str(end_date)},
@@ -103,9 +130,22 @@ with tabs[0]:
         fig_macd.add_trace(go.Bar(x=df["date"], y=df["macd_hist"], name="Hist"))
         st.plotly_chart(fig_macd, use_container_width=True)
 
+        st.markdown("**Ultimos valores de indicadores**")
+        cols = ["date", "close", "sma", "ema", "rsi", "macd", "macd_signal", "bb_upper", "bb_lower", "stoch_k", "stoch_d"]
+        st.dataframe(df[cols].tail(5), use_container_width=True)
+
 
 with tabs[1]:
-    st.subheader("Modulo 2 - Rendimientos y propiedades empiricas")
+    show_module_intro(
+        module_name="Modulo 2 - Rendimientos y propiedades empiricas",
+        objective="Caracterizar distribucion de rendimientos y validar normalidad.",
+        formulas=[
+            "r_t simple = (P_t / P_{t-1}) - 1",
+            "r_t log = ln(P_t / P_{t-1})",
+            "Pruebas: Jarque-Bera y Shapiro-Wilk",
+        ],
+        interpretation="Si p-value < 0.05 se rechaza normalidad. Esto apoya uso de modelos de riesgo con colas pesadas.",
+    )
     data = safe_get(
         f"/rendimientos/{main_ticker}",
         params={"start_date": str(start_date), "end_date": str(end_date)},
@@ -133,7 +173,15 @@ with tabs[1]:
 
 
 with tabs[2]:
-    st.subheader("Modulo 3 - ARCH/GARCH")
+    show_module_intro(
+        module_name="Modulo 3 - ARCH/GARCH",
+        objective="Modelar volatilidad condicional y comparar modelos por criterios de informacion.",
+        formulas=[
+            "Comparacion por AIC y BIC (menor es mejor).",
+            "Pronostico de volatilidad a un paso.",
+        ],
+        interpretation="El mejor modelo por AIC se usa para estimar volatilidad esperada de corto plazo.",
+    )
     data = safe_get(
         f"/volatilidad/{main_ticker}",
         params={"start_date": str(start_date), "end_date": str(end_date)},
@@ -141,13 +189,23 @@ with tabs[2]:
     if data:
         models = pd.DataFrame(data["models"]).sort_values("aic")
         st.dataframe(models, use_container_width=True)
+        fig_ic = px.bar(models, x="model_name", y=["aic", "bic"], barmode="group", title="Comparacion AIC/BIC")
+        st.plotly_chart(fig_ic, use_container_width=True)
         st.success(
             f"Mejor modelo por AIC: {data['best_model']} | Pronostico volatilidad proximo dia: {data['forecast_next_day_volatility']:.4f}"
         )
 
 
 with tabs[3]:
-    st.subheader("Modulo 4 - CAPM y beta")
+    show_module_intro(
+        module_name="Modulo 4 - CAPM y beta",
+        objective="Cuantificar riesgo sistematico y rendimiento esperado por activo.",
+        formulas=[
+            "beta_i = Cov(R_i, R_m) / Var(R_m)",
+            "E[R_i] = R_f + beta_i * (E[R_m] - R_f)",
+        ],
+        interpretation="beta > 1 indica activo mas sensible al mercado; beta < 1 sugiere perfil defensivo.",
+    )
     data = safe_get("/capm", params={"tickers": ",".join([t for t in tickers if t != "SPY"]), "benchmark": "SPY"})
     if data:
         assets = pd.DataFrame(data["assets"])
@@ -160,7 +218,16 @@ with tabs[3]:
 
 
 with tabs[4]:
-    st.subheader("Modulo 5 - VaR y CVaR")
+    show_module_intro(
+        module_name="Modulo 5 - VaR y CVaR",
+        objective="Cuantificar perdida potencial diaria y anualizada del portafolio.",
+        formulas=[
+            "VaR al nivel c usa cola alpha = 1 - c.",
+            "CVaR = perdida promedio condicionada a exceder VaR.",
+            "VaR anualizado ~= VaR diario * sqrt(252).",
+        ],
+        interpretation="CVaR complementa VaR al capturar severidad de eventos extremos, no solo umbral.",
+    )
     selected = st.multiselect("Activos para VaR", options=tickers, default=tickers[: min(5, len(tickers))])
     if selected:
         weight_default = [round(1 / len(selected), 4)] * len(selected)
@@ -175,7 +242,8 @@ with tabs[4]:
             payload = {"tickers": selected, "weights": weights, "confidence": confidence}
             data = safe_post("/var", payload)
             if data:
-                st.json(data)
+                st.markdown("**Resultados numericos**")
+                st.dataframe(pd.DataFrame([data]), use_container_width=True)
                 fig = go.Figure(
                     data=[
                         go.Bar(name="Parametrico", x=["VaR Diario"], y=[data["var_parametric"]]),
@@ -191,7 +259,16 @@ with tabs[4]:
 
 
 with tabs[5]:
-    st.subheader("Modulo 6 - Frontera eficiente de Markowitz")
+    show_module_intro(
+        module_name="Modulo 6 - Frontera eficiente de Markowitz",
+        objective="Encontrar combinaciones optimas de riesgo-retorno del portafolio.",
+        formulas=[
+            "mu_p = w' * mu",
+            "sigma_p = sqrt(w' * Sigma * w)",
+            "Sharpe = retorno / volatilidad (aprox usada en la API)",
+        ],
+        interpretation="La frontera eficiente contiene portafolios no dominados. Se reportan minima varianza y maximo Sharpe.",
+    )
     selected = st.multiselect("Activos", options=tickers, default=tickers[: min(5, len(tickers))], key="m6")
     n_portfolios = st.slider("Numero de portafolios", min_value=3000, max_value=30000, value=10000, step=1000)
     if st.button("Calcular frontera eficiente"):
@@ -217,7 +294,16 @@ with tabs[5]:
 
 
 with tabs[6]:
-    st.subheader("Modulo 7 - Senales y alertas")
+    show_module_intro(
+        module_name="Modulo 7 - Senales y alertas",
+        objective="Generar alertas de compra/venta en lenguaje simple por activo.",
+        formulas=[
+            "MACD crossover bullish/bearish",
+            "RSI extremo: >70 sobrecompra, <30 sobreventa",
+            "Precio vs bandas de Bollinger",
+        ],
+        interpretation="Las senales sintetizan multiples indicadores en recomendaciones buy/sell/mixed/neutral.",
+    )
     data = safe_get("/alertas", params={"tickers": ",".join([t for t in tickers if t != "SPY"])})
     if data:
         for alert in data["alerts"]:
@@ -228,7 +314,17 @@ with tabs[6]:
 
 
 with tabs[7]:
-    st.subheader("Modulo 8 - Macro y benchmark")
+    show_module_intro(
+        module_name="Modulo 8 - Macro y benchmark",
+        objective="Comparar portafolio vs benchmark e incorporar contexto macroeconomico.",
+        formulas=[
+            "Alpha de Jensen",
+            "Tracking Error",
+            "Information Ratio",
+            "Sharpe y Max Drawdown",
+        ],
+        interpretation="Se evalua si el portafolio supera al benchmark ajustando por riesgo.",
+    )
     macro = safe_get("/macro")
     portfolio_tickers = [t for t in tickers if t != "SPY"]
     capm_data = safe_get("/capm", params={"tickers": ",".join(portfolio_tickers), "benchmark": "SPY"})

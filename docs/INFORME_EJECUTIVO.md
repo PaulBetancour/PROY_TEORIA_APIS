@@ -4,9 +4,9 @@
 - Proyecto: Analitica de riesgo financiero con APIs
 - Curso: Teoria del Riesgo
 - Universidad: USTA
-- Integrantes: [Nombre 1] y [Nombre 2]
+- Integrantes: Paula Andrea Betancour
 - Profesor: Javier Mauricio Sierra
-- Fecha: [Completar]
+- Fecha: 15-04-2026
 
 ## 2. Resumen ejecutivo
 Se desarrollo una solucion de analitica de riesgo financiero con arquitectura separada backend/frontend. El backend en FastAPI centraliza calculos y consumo de datos de mercado/macroeconomicos. El frontend en Streamlit presenta resultados interactivos para analisis tecnico, rendimientos, volatilidad, CAPM, VaR/CVaR, optimizacion de portafolio, senales y comparacion contra benchmark.
