@@ -96,6 +96,11 @@ Ver:
 ## Checklist de cumplimiento
 Ver:
 - docs/CHECKLIST_RUBRICA.md
+- docs/ENTREGABLES_FINALES.md
+
+## Material de entrega academica
+- Informe ejecutivo editable: docs/INFORME_EJECUTIVO.md
+- Guion de sustentacion: docs/GUION_SUSTENTACION.md
 
 ## Uso de IA
 Este proyecto fue asistido por herramientas de IA para acelerar estructura, documentacion y validaciones. Todas las decisiones tecnicas deben ser entendidas y defendidas por el equipo durante la sustentacion.

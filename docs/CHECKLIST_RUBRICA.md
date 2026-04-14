@@ -26,10 +26,13 @@
 - [x] requirements con versiones fijas.
 - [x] .gitignore y .env.example.
 - [x] README principal con guia completa.
+- [x] Borrador de informe ejecutivo (docs/INFORME_EJECUTIVO.md).
+- [x] Guion de sustentacion (docs/GUION_SUSTENTACION.md).
 
-## Pendiente para 5.0 final
+## Pendiente obligatorio de entrega
+- [ ] Convertir informe a PDF final (maximo 5 paginas) con nombres y fecha.
+
+## Pendiente para 5.0 final / bonificacion
 - [ ] Agregar tests pytest (ideal para bonus).
 - [ ] Agregar backtesting Kupiec (bonus).
 - [ ] Agregar despliegue en Render/Railway y Docker (bonus).
-- [ ] Generar informe PDF de max 5 paginas.
-- [ ] Preparar script de sustentacion (preguntas frecuentes).
