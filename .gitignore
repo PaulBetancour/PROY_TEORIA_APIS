@@ -1,32 +1,15 @@
-# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
+*.log
 .pytest_cache/
 .mypy_cache/
-.ipynb_checkpoints/
 
-# Environments
 .venv/
-.venv312/
+backend/.venv312/
 venv/
 env/
 
-# Secrets
-.env
 backend/.env
-frontend/.env
-
-# Build / dist
-build/
-dist/
-*.egg-info/
-
-# Logs
-*.log
-
-# Editor
+.env
 .vscode/
 .idea/

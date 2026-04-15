@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Validacion de Calculos y Datos Yahoo</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #122033;
+      --muted: #52657a;
+      --ok: #0f9d58;
+      --warn: #ef6c00;
+      --bad: #c62828;
+      --line: #d7e0ea;
+      --accent: #0b5fff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #eef3fb 0%, #f9fbff 100%);
+      color: var(--text);
+    }
+
+    .container {
+      width: min(1200px, 96vw);
+      margin: 24px auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 4px 18px rgba(9, 30, 66, 0.06);
+    }
+
+    h1, h2, h3 {
+      margin: 8px 0 10px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      letter-spacing: 0.2px;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.6fr 2fr 1fr;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 0.95rem;
+    }
+
+    button {
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    button:hover { filter: brightness(0.95); }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #fafcff;
+      font-size: 0.9rem;
+    }
+
+    .ok { color: var(--ok); font-weight: 700; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .bad { color: var(--bad); font-weight: 700; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: #f7faff; }
+
+    .mono { font-family: Consolas, "Courier New", monospace; font-size: 0.85rem; }
+
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .small {
+      font-size: 0.86rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    @media (max-width: 860px) {
+      .toolbar { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Validacion Tecnica - Calculos y Datos Yahoo</h1>
+      <p class="small">
+        Este panel prueba en tiempo real que el backend este trayendo datos diarios (aprox. 5 anos) para NVDA, CIB (Bancolombia ADR NYSE), EC (Ecopetrol ADR NYSE), KO y SPY,
+        y valida calculos clave: rendimientos, CAPM, VaR/CVaR, frontera eficiente y macro.
+      </p>
+      <div class="toolbar">
+        <div class="field">
+          <label>URL backend FastAPI</label>
+          <input id="baseUrl" value="http://127.0.0.1:8000" />
+        </div>
+        <div class="field">
+          <label>Tickers (coma separados)</label>
+          <input id="tickers" value="NVDA, CIB, EC, KO, SPY" />
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="btnRun">Ejecutar validacion</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Resumen de estado</h2>
+      <div id="status" class="status-grid"></div>
+    </div>
+
+    <div class="card">
+      <h2>Pruebas por ticker (Yahoo)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Ticker</th>
+            <th>Puntos</th>
+            <th>Rango fechas</th>
+            <th>OHLC valido</th>
+            <th>Datos crecientes</th>
+            <th>Retorno endpoint vs manual</th>
+            <th>Resultado</th>
+          </tr>
+        </thead>
+        <tbody id="tickerTable"></tbody>
+      </table>
+    </div>
+
+    <div class="card charts">
+      <h2>Graficos de validacion</h2>
+      <div id="priceChart" style="height: 360px;"></div>
+      <div id="returnChart" style="height: 340px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Validacion de modulos (muestras)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Modulo</th>
+            <th>Chequeo</th>
+            <th>Valor observado</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="moduleTable"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Interpretacion automatica (1 parrafo)</h2>
+      <p id="interpretation" class="small"></p>
+    </div>
+  </div>
+
+  <script>
+    const DATE_END = new Date();
+    const DATE_START = new Date();
+    DATE_START.setFullYear(DATE_END.getFullYear() - 5);
+
+    function fmtDate(d) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function cls(flag) {
+      if (flag === true) return "ok";
+      if (flag === false) return "bad";
+      return "warn";
+    }
+
+    function tag(flag, ok = "OK", bad = "FALLA", warn = "AVISO") {
+      if (flag === true) return `<span class="ok">${ok}</span>`;
+      if (flag === false) return `<span class="bad">${bad}</span>`;
+      return `<span class="warn">${warn}</span>`;
+    }
+
+    function normalizeBase(base) {
+      const b = (base || "").trim();
+      if (!b) return "http://127.0.0.1:8000";
+      if (b.startsWith("http://") || b.startsWith("https://")) return b;
+      return `http://${b}`;
+    }
+
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...options, signal: ctrl.signal });
+      } catch (e) {
+        if (e && e.name === "AbortError") {
+          throw new Error(`Timeout de ${Math.round(timeoutMs / 1000)}s agotado`);
+        }
+        throw e;
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    async function apiGet(base, path, params = {}, retries = 3, timeoutMs = 30000) {
+      const url = new URL(path, normalizeBase(base));
+      Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+      let lastErr = null;
+      for (let i = 1; i <= retries; i += 1) {
+        try {
+          const r = await fetchWithTimeout(url.toString(), {}, timeoutMs);
+          if (!r.ok) {
+            const tx = await r.text();
+            throw new Error(`${r.status} ${r.statusText} - ${tx}`);
+          }
+          return await r.json();
+        } catch (e) {
+          lastErr = e;
+          await new Promise((res) => setTimeout(res, 400 * i));
+        }
+      }
+
+      throw new Error(
+        `GET ${path} fallo tras ${retries} intentos en ${normalizeBase(base)} (timeout ${Math.round(timeoutMs / 1000)}s). ` +
+        `Detalle: ${String(lastErr?.message || lastErr)}`
+      );
+    }
+
+    async function apiPost(base, path, payload, retries = 3, timeoutMs = 45000) {
+      const url = new URL(path, normalizeBase(base));
+      let lastErr = null;
+
+      for (let i = 1; i <= retries; i += 1) {
+        try {
+          const r = await fetchWithTimeout(
+            url.toString(),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            },
+            timeoutMs
+          );
+          if (!r.ok) {
+            const tx = await r.text();
+            throw new Error(`${r.status} ${r.statusText} - ${tx}`);
+          }
+          return await r.json();
+        } catch (e) {
+          lastErr = e;
+          await new Promise((res) => setTimeout(res, 500 * i));
+        }
+      }
+
+      throw new Error(
+        `POST ${path} fallo tras ${retries} intentos (timeout ${Math.round(timeoutMs / 1000)}s). ` +
+        `Detalle: ${String(lastErr?.message || lastErr)}`
+      );
+    }
+
+    function toReturnSeries(points) {
+      const out = [];
+      for (let i = 1; i < points.length; i += 1) {
+        const prev = Number(points[i - 1].close);
+        const curr = Number(points[i].close);
+        out.push({
+          date: points[i].date,
+          simple_return: (curr - prev) / prev,
+          log_return: Math.log(curr / prev),
+        });
+      }
+      return out;
+    }
+
+    function safeNum(x) {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function appendStatus(items) {
+      const status = document.getElementById("status");
+      status.innerHTML = items
+        .map((it) => `<div class="pill"><strong>${it.label}:</strong> <span class="${cls(it.ok)}">${it.text}</span></div>`)
+        .join("");
+    }
+
+    function appendModuleRow(module, check, value, ok) {
+      const tb = document.getElementById("moduleTable");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${module}</td>
+        <td>${check}</td>
+        <td class="mono">${value}</td>
+        <td>${tag(ok)}</td>
+      `;
+      tb.appendChild(tr);
+    }
+
+    async function runValidation() {
+      const btn = document.getElementById("btnRun");
+      btn.disabled = true;
+      btn.textContent = "Validando...";
+
+      const base = normalizeBase(document.getElementById("baseUrl").value);
+      const tickers = document
+        .getElementById("tickers")
+        .value
+        .split(",")
+        .map((x) => x.trim().toUpperCase())
+        .filter(Boolean);
+
+      const start = fmtDate(DATE_START);
+      const end = fmtDate(DATE_END);
+
+      document.getElementById("tickerTable").innerHTML = "";
+      document.getElementById("moduleTable").innerHTML = "";
+      document.getElementById("interpretation").textContent = "Ejecutando pruebas...";
+
+      const statusItems = [];
+      const priceTraces = [];
+      const retTraces = [];
+
+      let healthOk = false;
+      try {
+        const health = await apiGet(base, "/health", {}, 2, 5000);
+        healthOk = health.status === "ok";
+        statusItems.push({ label: "Backend", text: healthOk ? "Conectado" : "Sin estado ok", ok: healthOk });
+      } catch (e) {
+        statusItems.push({ label: "Backend", text: String(e.message), ok: false });
+        statusItems.push({ label: "Sugerencia", text: "Ejecuta iniciar_validacion.bat para auto-reinicio de servicios", ok: null });
+        appendStatus(statusItems);
+        document.getElementById("interpretation").textContent = "No se pudo conectar al backend, por lo que no se puede validar Yahoo ni calculos.";
+        btn.disabled = false;
+        btn.textContent = "Ejecutar validacion";
+        return;
+      }
+
+      let totalOk = 0;
+      let totalChecks = 0;
+      let portfolioReturns = [];
+
+      for (const ticker of tickers) {
+        totalChecks += 1;
+        let rowOk = true;
+        let pointsN = 0;
+        let dateInfo = "-";
+
+        try {
+          const prices = await apiGet(base, `/precios/${ticker}`, { start_date: start, end_date: end }, 1, 45000);
+          const points = prices.points || [];
+          pointsN = points.length;
+          dateInfo = `${prices.start_date} -> ${prices.end_date}`;
+
+          const enoughPoints = pointsN >= 900;
+          const ohlcValid = points.every((p) => [p.open, p.high, p.low, p.close].every((v) => Number.isFinite(Number(v))));
+          const increasing = points.every((p, i) => i === 0 || p.date >= points[i - 1].date);
+
+          const retEndpoint = await apiGet(base, `/rendimientos/${ticker}`, { start_date: start, end_date: end }, 1, 45000);
+          const ep = retEndpoint.points || [];
+          const manual = toReturnSeries(points);
+
+          let diff = NaN;
+          if (ep.length > 0 && manual.length > 0) {
+            const e0 = safeNum(ep[0].simple_return);
+            const m0 = safeNum(manual[0].simple_return);
+            diff = Math.abs(e0 - m0);
+          }
+
+          const retMatch = Number.isFinite(diff) && diff < 1e-9;
+          rowOk = enoughPoints && ohlcValid && increasing && retMatch;
+          if (rowOk) totalOk += 1;
+
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><strong>${ticker}</strong></td>
+            <td>${pointsN}</td>
+            <td>${dateInfo}</td>
+            <td>${tag(ohlcValid)}</td>
+            <td>${tag(increasing)}</td>
+            <td>${tag(retMatch, `OK (diff=${diff.toExponential(2)})`, `FALLA (diff=${Number.isFinite(diff) ? diff.toExponential(2) : "NaN"})`)}</td>
+            <td>${tag(rowOk)}</td>
+          `;
+          document.getElementById("tickerTable").appendChild(tr);
+
+          priceTraces.push({ x: points.map((p) => p.date), y: points.map((p) => p.close), mode: "lines", name: ticker });
+          retTraces.push({ x: ep.map((p) => p.date), y: ep.map((p) => p.simple_return), mode: "lines", name: `${ticker} r_t` });
+
+          if (ep.length > 0) {
+            portfolioReturns.push(ep.map((p) => Number(p.simple_return)));
+          }
+        } catch (e) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><strong>${ticker}</strong></td>
+            <td colspan="5" class="mono">${String(e.message)}</td>
+            <td>${tag(false)}</td>
+          `;
+          document.getElementById("tickerTable").appendChild(tr);
+        }
+      }
+
+      statusItems.push({ label: "Pruebas Yahoo", text: `${totalOk}/${totalChecks} tickers OK`, ok: totalOk === totalChecks && totalChecks > 0 });
+
+      Plotly.newPlot("priceChart", priceTraces, {
+        title: "Precios de cierre por ticker (fuente Yahoo via backend)",
+        margin: { t: 50, r: 20, b: 40, l: 50 },
+        xaxis: { title: "Fecha" },
+        yaxis: { title: "Precio" },
+      }, { responsive: true });
+
+      Plotly.newPlot("returnChart", retTraces, {
+        title: "Rendimientos simples diarios por ticker",
+        margin: { t: 50, r: 20, b: 40, l: 50 },
+        xaxis: { title: "Fecha" },
+        yaxis: { title: "Rendimiento" },
+      }, { responsive: true });
+
+      let capmOk = false;
+      let varOk = false;
+      let frontierOk = false;
+      let macroOk = false;
+
+      try {
+        const benchmark = tickers.includes("SPY") ? "SPY" : tickers[tickers.length - 1];
+        const assets = tickers.filter((t) => t !== benchmark);
+        const capm = await apiGet(base, "/capm", { tickers: assets.join(","), benchmark }, 3, 30000);
+        const betas = (capm.assets || []).map((a) => Number(a.beta));
+        capmOk = betas.length > 0 && betas.every((b) => Number.isFinite(b));
+        appendModuleRow("M4 CAPM", "Beta numerico para activos", JSON.stringify(betas.slice(0, 4)), capmOk);
+      } catch (e) {
+        appendModuleRow("M4 CAPM", "Consulta endpoint", String(e.message), false);
+      }
+
+      try {
+        const n = tickers.length;
+        const w = Array.from({ length: n }, () => 1 / n);
+        const var95 = await apiPost(base, "/var", { tickers, weights: w, confidence: 0.95 });
+
+        varOk =
+          Number(var95.var_parametric_daily) >= 0 &&
+          Number(var95.var_historical_daily) >= 0 &&
+          Number(var95.var_monte_carlo_daily) >= 0 &&
+          Number(var95.cvar_historical_daily) >= 0;
+        appendModuleRow(
+          "M5 VaR/CVaR",
+          "Medidas no negativas",
+          `VaR_h=${Number(var95.var_historical_daily).toFixed(6)} CVaR=${Number(var95.cvar_historical_daily).toFixed(6)}`,
+          varOk
+        );
+      } catch (e) {
+        appendModuleRow("M5 VaR/CVaR", "Consulta endpoint", String(e.message), false);
+      }
+
+      try {
+        const fr = await apiPost(base, "/frontera-eficiente", { tickers, n_portfolios: 10000 });
+
+        frontierOk =
+          Array.isArray(fr.points) && fr.points.length >= 9000 &&
+          fr.min_variance && fr.max_sharpe;
+        appendModuleRow("M6 Markowitz", "Cantidad de portafolios", String((fr.points || []).length), frontierOk);
+      } catch (e) {
+        appendModuleRow("M6 Markowitz", "Consulta endpoint", String(e.message), false);
+      }
+
+      try {
+        const macro = await apiGet(base, "/macro", {}, 3, 30000);
+        macroOk =
+          Number.isFinite(Number(macro.risk_free_rate_annual)) &&
+          Number.isFinite(Number(macro.inflation_yoy)) &&
+          Number.isFinite(Number(macro.usd_cop));
+        appendModuleRow(
+          "M8 Macro",
+          "Campos macro numericos",
+          `Rf=${Number(macro.risk_free_rate_annual).toFixed(4)}, CPI=${Number(macro.inflation_yoy).toFixed(4)}, USD/COP=${Number(macro.usd_cop).toFixed(2)}`,
+          macroOk
+        );
+      } catch (e) {
+        appendModuleRow("M8 Macro", "Consulta endpoint", String(e.message), false);
+      }
+
+      statusItems.push({ label: "CAPM", text: capmOk ? "Consistente" : "Con observaciones", ok: capmOk });
+      statusItems.push({ label: "VaR/CVaR", text: varOk ? "Consistente" : "Con observaciones", ok: varOk });
+      statusItems.push({ label: "Markowitz", text: frontierOk ? "Consistente" : "Con observaciones", ok: frontierOk });
+      statusItems.push({ label: "Macro", text: macroOk ? "Consistente" : "Con observaciones", ok: macroOk });
+      appendStatus(statusItems);
+
+      const globalOk = healthOk && totalOk === totalChecks && capmOk && varOk && frontierOk && macroOk;
+      const text = globalOk
+        ? "La validacion indica que el backend esta consultando correctamente datos historicos diarios via Yahoo para los activos definidos y que los calculos principales (rendimientos, CAPM, VaR/CVaR, Markowitz y macro) cumplen pruebas de consistencia numerica basica; por tanto, el flujo matematico y de datos es coherente para continuar con analisis interpretativo y entrega formal."
+        : "La validacion detecta al menos una observacion en datos o calculos: revisa la tabla por ticker y el bloque de modulos para identificar si la falla proviene de conectividad, insuficiencia de datos historicos, o desajustes numericos entre formulas manuales y endpoints, y corrige antes de cerrar la fase de resultados.";
+
+      document.getElementById("interpretation").textContent = text;
+      btn.disabled = false;
+      btn.textContent = "Ejecutar validacion";
+    }
+
+    window.addEventListener("error", (ev) => {
+      const statusItems = [
+        { label: "Frontend JS", text: `Error: ${ev.message}`, ok: false },
+        { label: "Sugerencia", text: "Recarga con Ctrl+F5 y vuelve a ejecutar", ok: null },
+      ];
+      appendStatus(statusItems);
+    });
+
+    document.getElementById("btnRun").addEventListener("click", runValidation);
+    window.addEventListener("DOMContentLoaded", () => {
+      runValidation().catch((e) => {
+        appendStatus([{ label: "Ejecucion", text: String(e.message), ok: false }]);
+      });
+    });
+  </script>
+</body>
+</html>

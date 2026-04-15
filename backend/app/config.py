@@ -1,46 +1,46 @@
 from functools import lru_cache
-from pydantic import Field
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Proyecto Teoria de Riesgo API"
+    app_name: str = "Proyecto Teoria del Riesgo API"
     app_version: str = "1.0.0"
 
-    # Market data settings
+    default_tickers: list[str] = ["NVDA", "CIB", "EC", "KO", "SPY"]
     default_benchmark: str = "SPY"
-    default_tickers: list[str] = ["NVDA", "BCOLO.CB", "ECOPETROL.CB", "KO", "SPY"]
-    default_start_date: str = "2023-01-01"
-    default_end_date: str | None = None
-    market_data_provider: str = "yahoo"
+    history_years: int = Field(default=5, ge=2, le=20)
 
-    # Indicator settings
-    sma_window: int = Field(default=20, ge=2, le=500)
-    ema_window: int = Field(default=20, ge=2, le=500)
-    rsi_window: int = Field(default=14, ge=2, le=200)
-    bb_window: int = Field(default=20, ge=2, le=500)
-    bb_std: float = Field(default=2.0, ge=0.1, le=5.0)
-    stoch_window: int = Field(default=14, ge=2, le=200)
+    # Provider priority: yfinance | yahoo | alpha_vantage | finnhub
+    market_data_provider: str = "yfinance"
 
-    # Risk settings
-    default_confidence: float = Field(default=0.95, ge=0.8, le=0.999)
-    monte_carlo_sims: int = Field(default=10000, ge=1000, le=200000)
-    trading_days_per_year: int = Field(default=252, ge=200, le=366)
-
-    # API keys (optional but supported)
+    # API keys
     fred_api_key: str | None = None
     alpha_vantage_api_key: str | None = None
     finnhub_api_key: str | None = None
-    polygon_api_key: str | None = None
 
-    # Banco de la Republica configurable endpoints
-    banrep_enabled: bool = False
-    banrep_fx_url: str | None = None
-    banrep_risk_free_url: str | None = None
-    banrep_inflation_url: str | None = None
+    # Risk / indicators params
+    default_confidence: float = Field(default=0.95, ge=0.8, le=0.999)
+    trading_days: int = Field(default=252, ge=200, le=366)
+    monte_carlo_sims: int = Field(default=10000, ge=10000, le=200000)
 
-    # HTTP and cache settings
-    request_timeout_seconds: int = Field(default=15, ge=1, le=120)
+    sma_window: int = Field(default=20, ge=2, le=300)
+    ema_window: int = Field(default=20, ge=2, le=300)
+    rsi_window: int = Field(default=14, ge=2, le=100)
+    bb_window: int = Field(default=20, ge=2, le=300)
+    bb_std: float = Field(default=2.0, ge=0.5, le=4.0)
+    stoch_window: int = Field(default=14, ge=2, le=100)
+
+    request_timeout_seconds: int = Field(default=8, ge=3, le=120)
+    prices_cache_ttl_seconds: int = Field(default=300, ge=0, le=3600)
+
+    @field_validator("default_tickers", mode="before")
+    @classmethod
+    def parse_ticker_list(cls, value):
+        if isinstance(value, str):
+            return [x.strip().upper() for x in value.split(",") if x.strip()]
+        return value
 
     model_config = SettingsConfigDict(
         env_file=".env",
