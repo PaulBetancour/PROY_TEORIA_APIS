@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+import html
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from requests import HTTPError
 from plotly.subplots import make_subplots
 from scipy import stats
 
@@ -24,13 +26,28 @@ class ApiClient:
 
     def get(self, path: str, params: dict | None = None) -> dict:
         response = requests.get(self._url(path), params=params or {}, timeout=60)
-        response.raise_for_status()
+        self._raise_for_status_with_detail(response)
         return response.json()
 
     def post(self, path: str, payload: dict) -> dict:
         response = requests.post(self._url(path), json=payload, timeout=60)
-        response.raise_for_status()
+        self._raise_for_status_with_detail(response)
         return response.json()
+
+    @staticmethod
+    def _raise_for_status_with_detail(response: requests.Response) -> None:
+        try:
+            response.raise_for_status()
+        except HTTPError as exc:
+            detail = None
+            try:
+                payload = response.json()
+                detail = payload.get("detail") if isinstance(payload, dict) else None
+            except ValueError:
+                detail = response.text.strip() or None
+            if detail:
+                raise HTTPError(f"{exc} - {detail}", response=response) from exc
+            raise
 
 
 @st.cache_data(show_spinner=False)
@@ -44,7 +61,6 @@ def api_post(base_url: str, path: str, payload: dict) -> dict:
 
 
 def api_get_live(base_url: str, path: str, params: dict | None = None) -> dict:
-    # For endpoints that change frequently or were recently fixed, bypass cache.
     return ApiClient(base_url).get(path, params=params)
 
 
@@ -129,8 +145,80 @@ def one_paragraph(text: str) -> None:
     st.markdown(f"<div style='font-size: 0.97rem; text-align: justify;'>{text}</div>", unsafe_allow_html=True)
 
 
+def inject_custom_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .analysis-title {
+            font-size: 1.14rem;
+            font-weight: 700;
+            color: #0b3c5d;
+            margin: 0.35rem 0 0.45rem 0;
+        }
+        .analysis-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #dbe7f3;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 0.7rem;
+            font-size: 1.05rem;
+            color: #102a43;
+            box-shadow: 0 2px 8px rgba(16, 42, 67, 0.06);
+        }
+        .analysis-table th {
+            background: linear-gradient(90deg, #e6f2ff, #f4f9ff);
+            color: #0b3c5d;
+            font-weight: 700;
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #dbe7f3;
+        }
+        .analysis-table td {
+            padding: 11px 12px;
+            border-bottom: 1px solid #eef3f9;
+            vertical-align: top;
+            line-height: 1.45;
+        }
+        .analysis-table tr:nth-child(even) td {
+            background: #f9fcff;
+        }
+        .analysis-table tr:last-child td {
+            border-bottom: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_analysis_table(title: str, rows: list[tuple[str, str]]) -> None:
+    rows_html = "".join(
+        f"<tr><td><strong>{html.escape(label)}</strong></td><td>{html.escape(value)}</td></tr>"
+        for label, value in rows
+    )
+    st.markdown(
+        f"""
+        <div class='analysis-title'>{html.escape(title)}</div>
+        <table class='analysis-table'>
+            <thead>
+                <tr>
+                    <th style='width: 28%;'>Aspecto</th>
+                    <th>Interpretacion</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="Proyecto Teoria de Riesgo", page_icon="📈", layout="wide")
+    inject_custom_styles()
 
     st.title("Proyecto Teoria de Riesgo - Dashboard Analitico")
     st.caption("Implementacion completa en Python con backend FastAPI y visualizacion Streamlit")
@@ -144,6 +232,9 @@ def main() -> None:
         tickers = [x.strip().upper() for x in tickers_text.split(",") if x.strip()]
         if not tickers:
             st.error("Debes ingresar al menos un ticker")
+            st.stop()
+        if len(set(tickers)) != len(tickers):
+            st.error("Los tickers deben ser unicos. Elimina duplicados para continuar.")
             st.stop()
 
         benchmark = st.selectbox("Benchmark", options=tickers, index=tickers.index("SPY") if "SPY" in tickers else 0)
@@ -191,6 +282,13 @@ def main() -> None:
         st.latex(r"SMA_t=\frac{1}{n}\sum_{i=0}^{n-1}P_{t-i},\quad EMA_t=\alpha P_t+(1-\alpha)EMA_{t-1}")
         st.latex(r"RSI=100-\frac{100}{1+RS},\quad MACD=EMA_{12}-EMA_{26}")
 
+        rep_asset_m1 = st.selectbox(
+            "Activo representativo",
+            options=tickers,
+            index=tickers.index("NVDA") if "NVDA" in tickers else 0,
+            key="rep_asset_m1",
+        )
+
         st.markdown("#### Panel explicativo de indicadores")
         st.info(
             "SMA/EMA: miden tendencia (EMA reacciona mas rapido).\n"
@@ -216,7 +314,7 @@ def main() -> None:
         bb_std = c5.slider("Bollinger std", min_value=1.0, max_value=3.5, value=2.0, step=0.1)
         stoch_window = c6.slider("Estocastico", min_value=5, max_value=50, value=14)
 
-        for ticker in tickers:
+        for ticker in [rep_asset_m1]:
             st.markdown(f"### {ticker}")
             df = get_prices(base_url, ticker, start_date, end_date)
             ind = compute_indicators(df, sma_window, ema_window, rsi_window, bb_window, bb_std, stoch_window)
@@ -290,7 +388,12 @@ def main() -> None:
                     ],
                 }
             )
-            st.dataframe(table.style.format({"Valor": "{:.4f}"}), use_container_width=True)
+            st.dataframe(
+                table.style.format({"Valor": "{:.4f}"}).set_properties(
+                    **{"font-size": "16px", "color": "#102a43", "background-color": "#f9fcff"}
+                ),
+                use_container_width=True,
+            )
 
             interpretation = (
                 f"Para {ticker}, el precio actual ({last['close']:.2f}) se evalua frente a tendencia y momento: "
@@ -298,20 +401,45 @@ def main() -> None:
                 "acota zonas de sobrecompra/sobreventa; MACD y su histograma muestran aceleracion o perdida de impulso, "
                 "y las Bandas de Bollinger junto al Estocastico permiten confirmar si el movimiento reciente luce extendido o con potencial de reversa."
             )
-            one_paragraph(interpretation)
+            trend_label = "alcista" if (last["close"] > last["sma"] and last["close"] > last["ema"]) else "mixta/bajista"
+            rsi_label = "sobrecompra" if last["rsi"] > 70 else ("sobreventa" if last["rsi"] < 30 else "neutral")
+            stoch_label = "sobrecompra" if last["stoch_k"] > 80 else ("sobreventa" if last["stoch_k"] < 20 else "neutral")
+            render_analysis_table(
+                "Analisis tecnico automatizado",
+                [
+                    ("Activo", ticker),
+                    ("Precio actual", f"{last['close']:.2f}"),
+                    ("Tendencia", f"Precio vs medias: sesgo {trend_label}"),
+                    ("Momento", f"RSI={last['rsi']:.2f} ({rsi_label}) y MACD={last['macd']:.4f}"),
+                    ("Bandas/Estocastico", f"%K={last['stoch_k']:.2f} ({stoch_label}), revisar extension/reversion"),
+                    ("Lectura integrada", interpretation),
+                ],
+            )
             st.divider()
 
     with tabs[1]:
         st.subheader("Modulo 2 - Rendimientos")
         st.latex(r"R_t=\frac{P_t-P_{t-1}}{P_{t-1}},\quad r_t=\ln\left(\frac{P_t}{P_{t-1}}\right)")
 
-        for ticker in tickers:
+        rep_asset_m2 = st.selectbox(
+            "Activo representativo",
+            options=tickers,
+            index=tickers.index("NVDA") if "NVDA" in tickers else 0,
+            key="rep_asset_m2",
+        )
+
+        for ticker in [rep_asset_m2]:
             st.markdown(f"### {ticker}")
             r_df = get_returns(base_url, ticker, start_date, end_date)
             calc_preview = r_df[["date", "simple_return", "log_return"]].dropna().tail(12).copy()
             calc_preview["date"] = calc_preview["date"].dt.date
             st.caption("Muestra de calculo de rendimientos simples y logaritmicos")
-            st.dataframe(calc_preview, use_container_width=True)
+            st.dataframe(
+                calc_preview.style.format({"simple_return": "{:.5f}", "log_return": "{:.5f}"}).set_properties(
+                    **{"font-size": "15px", "color": "#102a43", "background-color": "#f9fcff"}
+                ),
+                use_container_width=True,
+            )
 
             s_simple = r_df["simple_return"].dropna()
             s_log = r_df["log_return"].dropna()
@@ -355,7 +483,7 @@ def main() -> None:
                         "shapiro_stat": "{:.4f}",
                         "shapiro_pvalue": "{:.4f}",
                     }
-                ),
+                ).set_properties(**{"font-size": "15px", "color": "#102a43", "background-color": "#f9fcff"}),
                 use_container_width=True,
             )
 
@@ -404,14 +532,28 @@ def main() -> None:
                 f"Normalidad para {ret_view}: JB p={jb_p:.4f} y Shapiro p={sh_p:.4f}. "
                 f"Decision (5%): {'no se rechaza' if (jb_p >= 0.05 and sh_p >= 0.05) else 'se rechaza'} normalidad."
             )
-            st.write(normality_msg)
+            st.info(normality_msg)
 
             interp = (
                 f"En {ticker}, para la serie {ret_view}, la media es {mean:.5f} y la volatilidad {std:.5f}; "
                 f"las pruebas de normalidad (JB p={jb_p:.4f}, Shapiro p={sh_p:.4f}) indican "
                 f"{'rechazar' if (jb_p < 0.05 or sh_p < 0.05) else 'no rechazar'} normalidad al 5%, y la evidencia de hechos estilizados sugiere {stylized}"
             )
-            one_paragraph(interp)
+            render_analysis_table(
+                "Analisis estadistico automatizado",
+                [
+                    ("Activo", ticker),
+                    ("Serie analizada", ret_view),
+                    ("Media y volatilidad", f"media={mean:.5f}, volatilidad={std:.5f}"),
+                    ("Normalidad", f"JB p={jb_p:.4f}, Shapiro p={sh_p:.4f}"),
+                    (
+                        "Decision 5%",
+                        "No se rechaza normalidad" if (jb_p >= 0.05 and sh_p >= 0.05) else "Se rechaza normalidad",
+                    ),
+                    ("Hechos estilizados", stylized),
+                    ("Lectura integrada", interp),
+                ],
+            )
             st.divider()
 
     with tabs[2]:
@@ -568,7 +710,17 @@ def main() -> None:
             "evalua normalidad residual, mientras la volatilidad condicional y su pronostico por horizonte muestran persistencia temporal, "
             "justificando el uso de modelos condicionales frente a una varianza constante."
         )
-        one_paragraph(interp)
+        render_analysis_table(
+            "Interpretacion del modelo ARCH/GARCH",
+            [
+                ("Activo", rep_asset),
+                ("Modelo ganador", f"{vol['best_model']} (criterio AIC)"),
+                ("Normalidad de residuos", f"Jarque-Bera p={vol['residuals_jarque_bera_pvalue']:.4f}"),
+                ("Volatilidad condicional", "Se observa dinamica temporal y clustering de volatilidad."),
+                ("Pronostico", f"Horizonte evaluado: {forecast_steps} pasos hacia adelante."),
+                ("Lectura integrada", interp),
+            ],
+        )
 
     with tabs[3]:
         st.subheader("Modulo 4 - CAPM y Beta")
@@ -630,87 +782,112 @@ def main() -> None:
             "los activos con beta alta concentran mayor riesgo sistematico (no diversificable), mientras que el riesgo no sistematico "
             "puede reducirse combinando activos con distinta exposicion al mercado, como se observa en la dispersion frente al benchmark y su recta de regresion."
         )
-        one_paragraph(interp)
+        render_analysis_table(
+            "Interpretacion CAPM y riesgo sistematico",
+            [
+                ("Benchmark", benchmark),
+                ("Tasa libre de riesgo", f"CAPM={rf_capm:.4f}, Macro API={rf_macro:.4f}"),
+                ("Consistencia de tasa", "Consistente" if rf_gap < 1e-9 else "Revisar diferencia CAPM vs macro"),
+                ("Lectura de beta", "Beta alta implica mayor sensibilidad al mercado (riesgo sistematico)."),
+                ("Diversificacion", "El riesgo no sistematico se mitiga combinando activos."),
+                ("Lectura integrada", interp),
+            ],
+        )
 
     with tabs[4]:
         st.subheader("Modulo 5 - VaR y CVaR")
         st.latex(r"VaR_\alpha=-Q_\alpha(R_p),\quad CVaR_\alpha=-E[R_p\mid R_p\le Q_\alpha(R_p)]")
 
-        payload = {"tickers": tickers, "weights": weights, "confidence": 0.95}
-        var95 = api_post(base_url, "/var", payload)
-        payload99 = {"tickers": tickers, "weights": weights, "confidence": 0.99}
-        var99 = api_post(base_url, "/var", payload99)
+        try:
+            payload = {"tickers": tickers, "weights": weights, "confidence": 0.95}
+            var95 = api_post(base_url, "/var", payload)
+            payload99 = {"tickers": tickers, "weights": weights, "confidence": 0.99}
+            var99 = api_post(base_url, "/var", payload99)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo calcular VaR/CVaR: {exc}")
+            st.info("Revisa que los tickers sean unicos y que el backend tenga datos disponibles para todos los activos.")
+            var95 = None
+            var99 = None
 
-        sims = int(var95.get("monte_carlo_simulations", 0))
-        c1, c2 = st.columns(2)
-        c1.metric("Simulaciones Montecarlo", sims)
-        c2.metric("Cumple minimo requerido", "SI" if sims >= 10000 else "NO")
-        if sims < 10000:
-            st.warning("El modulo requiere al menos 10,000 simulaciones Montecarlo.")
+        if var95 is not None and var99 is not None:
+            sims = int(var95.get("monte_carlo_simulations", 0))
+            c1, c2 = st.columns(2)
+            c1.metric("Simulaciones Montecarlo", sims)
+            c2.metric("Cumple minimo requerido", "SI" if sims >= 10000 else "NO")
+            if sims < 10000:
+                st.warning("El modulo requiere al menos 10,000 simulaciones Montecarlo.")
 
-        summary = pd.DataFrame(
-            {
-                "Metodo": ["Parametrico", "Historico", "Montecarlo"],
-                "VaR 95 diario": [var95["var_parametric_daily"], var95["var_historical_daily"], var95["var_monte_carlo_daily"]],
-                "VaR 95 anual": [var95["var_parametric_annualized"], var95["var_historical_annualized"], var95["var_monte_carlo_annualized"]],
-                "VaR 99 diario": [var99["var_parametric_daily"], var99["var_historical_daily"], var99["var_monte_carlo_daily"]],
-                "VaR 99 anual": [var99["var_parametric_annualized"], var99["var_historical_annualized"], var99["var_monte_carlo_annualized"]],
-                "CVaR 95 diario": [np.nan, var95["cvar_historical_daily"], np.nan],
-                "CVaR 99 diario": [np.nan, var99["cvar_historical_daily"], np.nan],
-            }
-        )
-        numeric_cols = [c for c in summary.columns if c != "Metodo"]
-        fmt_summary = {c: "{:.5f}" for c in numeric_cols}
-        st.dataframe(summary.style.format(fmt_summary), use_container_width=True)
-
-        interpret = pd.DataFrame(
-            {
-                "Metodo": ["Parametrico", "Historico", "Montecarlo", "CVaR (Expected Shortfall)"],
-                "Lectura": [
-                    "Asume distribucion normal y usa media/desv. estandar.",
-                    "No impone forma paramétrica; usa cuantiles observados.",
-                    f"Simula escenarios aleatorios (n={sims}) con media y volatilidad estimada.",
-                    "Mide severidad esperada de perdidas extremas una vez superado el VaR.",
-                ],
-            }
-        )
-        st.dataframe(interpret, use_container_width=True)
-
-        ret_mat = returns_matrix(base_url, tickers, start_date, end_date)
-        w = np.array(weights)
-        rp = pd.Series(ret_mat.values @ w, index=ret_mat.index, name="portfolio")
-
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(x=rp, nbinsx=80, histnorm="probability density", name="Portafolio", opacity=0.7))
-        fig.add_vline(x=-var95["var_historical_daily"], line_dash="dash", line_color="orange", annotation_text="VaR95 hist")
-        fig.add_vline(x=-var99["var_historical_daily"], line_dash="dash", line_color="red", annotation_text="VaR99 hist")
-        fig.add_vline(x=-var95["cvar_historical_daily"], line_dash="dot", line_color="black", annotation_text="CVaR95")
-        fig.add_vline(x=-var99["cvar_historical_daily"], line_dash="dot", line_color="purple", annotation_text="CVaR99")
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Kupiec simple para VaR 95 historico
-        exceed = (rp < -var95["var_historical_daily"]).astype(int)
-        x = int(exceed.sum())
-        n = int(len(exceed))
-        p = 0.05
-        phat = x / n if n > 0 else 0.0
-        if x in {0, n}:
-            kupiec_p = np.nan
-        else:
-            lr_uc = -2 * (
-                ((n - x) * np.log(1 - p) + x * np.log(p))
-                - ((n - x) * np.log(1 - phat) + x * np.log(phat))
+            summary = pd.DataFrame(
+                {
+                    "Metodo": ["Parametrico", "Historico", "Montecarlo"],
+                    "VaR 95 diario": [var95["var_parametric_daily"], var95["var_historical_daily"], var95["var_monte_carlo_daily"]],
+                    "VaR 95 anual": [var95["var_parametric_annualized"], var95["var_historical_annualized"], var95["var_monte_carlo_annualized"]],
+                    "VaR 99 diario": [var99["var_parametric_daily"], var99["var_historical_daily"], var99["var_monte_carlo_daily"]],
+                    "VaR 99 anual": [var99["var_parametric_annualized"], var99["var_historical_annualized"], var99["var_monte_carlo_annualized"]],
+                    "CVaR 95 diario": [np.nan, var95["cvar_historical_daily"], np.nan],
+                    "CVaR 99 diario": [np.nan, var99["cvar_historical_daily"], np.nan],
+                }
             )
-            kupiec_p = 1 - stats.chi2.cdf(lr_uc, df=1)
-        st.write(f"Backtesting Kupiec (VaR95 historico): excepciones={x}/{n}, p-value={kupiec_p:.4f}")
+            numeric_cols = [c for c in summary.columns if c != "Metodo"]
+            fmt_summary = {c: "{:.5f}" for c in numeric_cols}
+            st.dataframe(summary.style.format(fmt_summary), use_container_width=True)
 
-        interp = (
-            f"Con los pesos normalizados del portafolio, el VaR y CVaR muestran la perdida potencial diaria y anual bajo metodos parametrico, historico y Montecarlo (n={sims} simulaciones); "
-            f"en 95% el CVaR={var95['cvar_historical_daily']:.5f} y en 99% el CVaR={var99['cvar_historical_daily']:.5f} cuantifican la severidad promedio en cola y complementan al VaR, "
-            "mientras que el test de Kupiec (opcional) evalua si la frecuencia de excepciones observada es consistente con el nivel de confianza."
-        )
-        one_paragraph(interp)
+            interpret = pd.DataFrame(
+                {
+                    "Metodo": ["Parametrico", "Historico", "Montecarlo", "CVaR (Expected Shortfall)"],
+                    "Lectura": [
+                        "Asume distribucion normal y usa media/desv. estandar.",
+                        "No impone forma paramétrica; usa cuantiles observados.",
+                        f"Simula escenarios aleatorios (n={sims}) con media y volatilidad estimada.",
+                        "Mide severidad esperada de perdidas extremas una vez superado el VaR.",
+                    ],
+                }
+            )
+            st.dataframe(interpret, use_container_width=True)
+
+            ret_mat = returns_matrix(base_url, tickers, start_date, end_date)
+            w = np.array(weights)
+            rp = pd.Series(ret_mat.values @ w, index=ret_mat.index, name="portfolio")
+
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=rp, nbinsx=80, histnorm="probability density", name="Portafolio", opacity=0.7))
+            fig.add_vline(x=-var95["var_historical_daily"], line_dash="dash", line_color="orange", annotation_text="VaR95 hist")
+            fig.add_vline(x=-var99["var_historical_daily"], line_dash="dash", line_color="red", annotation_text="VaR99 hist")
+            fig.add_vline(x=-var95["cvar_historical_daily"], line_dash="dot", line_color="black", annotation_text="CVaR95")
+            fig.add_vline(x=-var99["cvar_historical_daily"], line_dash="dot", line_color="purple", annotation_text="CVaR99")
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+
+            exceed = (rp < -var95["var_historical_daily"]).astype(int)
+            x = int(exceed.sum())
+            n = int(len(exceed))
+            p = 0.05
+            phat = x / n if n > 0 else 0.0
+            if x in {0, n}:
+                kupiec_p = np.nan
+            else:
+                lr_uc = -2 * (
+                    ((n - x) * np.log(1 - p) + x * np.log(p))
+                    - ((n - x) * np.log(1 - phat) + x * np.log(phat))
+                )
+                kupiec_p = 1 - stats.chi2.cdf(lr_uc, df=1)
+            interp = (
+                f"Con los pesos normalizados del portafolio, el VaR y CVaR muestran la perdida potencial diaria y anual bajo metodos parametrico, historico y Montecarlo (n={sims} simulaciones); "
+                f"en 95% el CVaR={var95['cvar_historical_daily']:.5f} y en 99% el CVaR={var99['cvar_historical_daily']:.5f} cuantifican la severidad promedio en cola y complementan al VaR, "
+                "mientras que el test de Kupiec (opcional) evalua si la frecuencia de excepciones observada es consistente con el nivel de confianza."
+            )
+            render_analysis_table(
+                "Interpretacion de riesgo VaR/CVaR",
+                [
+                    ("Simulaciones", f"Montecarlo n={sims}"),
+                    ("VaR historico diario 95%", f"{var95['var_historical_daily']:.5f}"),
+                    ("VaR historico diario 99%", f"{var99['var_historical_daily']:.5f}"),
+                    ("CVaR diario 95%", f"{var95['cvar_historical_daily']:.5f}"),
+                    ("CVaR diario 99%", f"{var99['cvar_historical_daily']:.5f}"),
+                    ("Backtesting Kupiec", f"Excepciones={x}/{n}, p-value={kupiec_p:.4f}"),
+                    ("Lectura integrada", interp),
+                ],
+            )
 
     with tabs[5]:
         st.subheader("Modulo 6 - Markowitz")
@@ -761,14 +938,23 @@ def main() -> None:
         if not eff.empty:
             idx = (eff["expected_return"] - target).abs().idxmin()
             near = eff.loc[idx]
-            st.write(f"Portafolio eficiente mas cercano al objetivo: retorno={near['expected_return']:.4f}, volatilidad={near['volatility']:.4f}")
 
         interp = (
             "La matriz de correlacion confirma el potencial de diversificacion entre activos, y la simulacion de 10,000+ combinaciones permite identificar "
             "el portafolio de minima varianza (menor riesgo total) y el de maximo Sharpe (mejor retorno por unidad de riesgo); la frontera eficiente resume "
             "las carteras dominantes para decidir segun tolerancia al riesgo u objetivo de retorno."
         )
-        one_paragraph(interp)
+        render_analysis_table(
+            "Interpretacion de frontera eficiente",
+            [
+                ("Portafolios simulados", f"{len(pts)}"),
+                ("Cartera minima varianza", f"Retorno={mv['expected_return']:.4f}, Vol={mv['volatility']:.4f}"),
+                ("Cartera maximo Sharpe", f"Retorno={ms['expected_return']:.4f}, Vol={ms['volatility']:.4f}"),
+                ("Objetivo de retorno", f"Objetivo={target:.4f}, cartera cercana: retorno={near['expected_return']:.4f}, vol={near['volatility']:.4f}" if not eff.empty else f"Objetivo={target:.4f}"),
+                ("Diversificacion", "La correlacion entre activos permite reducir riesgo total."),
+                ("Lectura integrada", interp),
+            ],
+        )
 
     with tabs[6]:
         st.subheader("Modulo 7 - Senales")
@@ -848,7 +1034,19 @@ def main() -> None:
             "golden/death cross y cruces estocasticos en extremos; con umbrales configurables, el panel resume por activo una senal accionable "
             "(compra, venta, mixta o neutral) en lenguaje simple para facilitar decisiones tacticas."
         )
-        one_paragraph(interp)
+        render_analysis_table(
+            "Interpretacion de senales tecnicas",
+            [
+                ("Umbrales RSI", f"Sobrecompra>{rsi_over:.1f}, Sobreventa<{rsi_under:.1f}"),
+                ("Umbrales Estocastico", f"Sobrecompra>{stoch_over:.1f}, Sobreventa<{stoch_under:.1f}"),
+                ("Medias moviles", f"Corta={short_ma}, Larga={long_ma}"),
+                (
+                    "Resumen de senales",
+                    f"Compra={int(counts.get('buy', 0))}, Venta={int(counts.get('sell', 0))}, Mixta={int(counts.get('mixed', 0))}, Neutral={int(counts.get('neutral', 0))}",
+                ),
+                ("Lectura integrada", interp),
+            ],
+        )
 
     with tabs[7]:
         st.subheader("Modulo 8 - Macro y benchmark")
@@ -974,17 +1172,27 @@ def main() -> None:
             use_container_width=True,
         )
 
-        st.write(f"Alpha de Jensen: {alpha_jensen:.4f}")
-        st.write(f"Tracking Error: {tracking_error:.4f}")
-        st.write(f"Information Ratio: {info_ratio:.4f}")
-
         interp = (
             f"El panel macro integra Rf={macro['risk_free_rate_annual']:.2%}, inflacion e USD/COP desde API; al comparar el portafolio optimo con {benchmark} en base 100, "
             f"se obtiene alpha de Jensen {alpha_jensen:.4f}, tracking error {tracking_error:.4f} e information ratio {info_ratio:.4f}, lo que permite concluir "
             f"que el portafolio {'supera' if perf.iloc[0]['Rendimiento acumulado'] > perf.iloc[1]['Rendimiento acumulado'] else 'no supera'} al benchmark en el periodo analizado en terminos riesgo-retorno; "
             f"ademas, el alpha {'es significativo' if alpha_significant else 'no es estadisticamente significativo'} al 5%."
         )
-        one_paragraph(interp)
+        render_analysis_table(
+            "Interpretacion macro y benchmarking",
+            [
+                ("Contexto macro", f"Rf={macro['risk_free_rate_annual']:.2%}, Inflacion={macro['inflation_yoy']:.2%}, USD/COP={macro['usd_cop']:.2f}"),
+                ("Alpha de Jensen", f"{alpha_jensen:.4f}"),
+                ("Tracking Error", f"{tracking_error:.4f}"),
+                ("Information Ratio", f"{info_ratio:.4f}"),
+                ("Significancia del alpha", "Significativo al 5%" if alpha_significant else "No significativo al 5%"),
+                (
+                    "Comparacion vs benchmark",
+                    "El portafolio supera al benchmark" if perf.iloc[0]["Rendimiento acumulado"] > perf.iloc[1]["Rendimiento acumulado"] else "El portafolio no supera al benchmark",
+                ),
+                ("Lectura integrada", interp),
+            ],
+        )
 
 
 if __name__ == "__main__":
